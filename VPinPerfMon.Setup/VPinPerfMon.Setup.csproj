@@ -9,6 +9,7 @@
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
     <DistribDir>$(MSBuildThisFileDirectory)..\distrib\</DistribDir>
+    <Authors>brian@hitney.com</Authors>
   </PropertyGroup>
 
   <ItemGroup>

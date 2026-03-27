@@ -8,6 +8,7 @@
     <VersionPrefix>0.1.1</VersionPrefix>
     <BuildNumber>$([System.Math]::Floor($([System.DateTime]::UtcNow.Subtract($([System.DateTime]::new(2025,1,1))).TotalDays)))</BuildNumber>
     <Version>$(VersionPrefix).$(BuildNumber)</Version>
+    <Authors>brian@hitney.com</Authors>
   </PropertyGroup>
 
   <ItemGroup>
