@@ -1,0 +1,5 @@
+<Solution>
+  <Project Path="VPinPerfMon\VPinPerfMon.csproj" />
+  <Project Path="VPinPerfMon.GUI/VPinPerfMon.GUI.csproj" />
+  <Project Path="VPinPerfMon.Setup\VPinPerfMon.Setup.csproj" />
+</Solution>

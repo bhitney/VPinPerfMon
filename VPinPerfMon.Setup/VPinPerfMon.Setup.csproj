@@ -1,0 +1,75 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <UseWindowsForms>true</UseWindowsForms>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
+    <DistribDir>$(MSBuildThisFileDirectory)..\distrib\</DistribDir>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.3" />
+  </ItemGroup>
+
+  <!-- Ensure main and GUI projects build before Setup so CopyToDistrib sees their output -->
+  <ItemGroup>
+    <ProjectReference Include="..\VPinPerfMon\VPinPerfMon.csproj" ReferenceOutputAssembly="false" Private="false" />
+    <ProjectReference Include="..\VPinPerfMon.GUI\VPinPerfMon.GUI.csproj" ReferenceOutputAssembly="false" Private="false" />
+  </ItemGroup>
+
+  <!-- Post-build: copy both projects' output to distrib, Windows runtimes only -->
+  <Target Name="CopyToDistrib" AfterTargets="Build">
+    <PropertyGroup>
+      <MainOutDir>$(MSBuildThisFileDirectory)..\VPinPerfMon\bin\$(Configuration)\net10.0\</MainOutDir>
+      <SetupOutDir>$(OutputPath)</SetupOutDir>
+    </PropertyGroup>
+
+    <!-- Clean distrib folder -->
+    <RemoveDir Directories="$(DistribDir)" />
+    <MakeDir Directories="$(DistribDir)" />
+
+    <!-- Main project: top-level files (exclude .pdb) -->
+    <ItemGroup>
+      <MainFiles Include="$(MainOutDir)*.*" Exclude="$(MainOutDir)*.pdb" />
+    </ItemGroup>
+    <Copy SourceFiles="@(MainFiles)" DestinationFolder="$(DistribDir)" SkipUnchangedFiles="true" />
+
+    <!-- Main project: Windows-only runtimes -->
+    <ItemGroup>
+      <WinRuntimeFiles Include="$(MainOutDir)runtimes\win\**\*.*" Platform="win" />
+      <WinRuntimeFiles Include="$(MainOutDir)runtimes\win-arm\**\*.*" Platform="win-arm" />
+      <WinRuntimeFiles Include="$(MainOutDir)runtimes\win-arm64\**\*.*" Platform="win-arm64" />
+      <WinRuntimeFiles Include="$(MainOutDir)runtimes\win-x64\**\*.*" Platform="win-x64" />
+      <WinRuntimeFiles Include="$(MainOutDir)runtimes\win-x86\**\*.*" Platform="win-x86" />
+    </ItemGroup>
+    <Copy SourceFiles="@(WinRuntimeFiles)"
+          DestinationFiles="@(WinRuntimeFiles->'$(DistribDir)runtimes\%(Platform)\%(RecursiveDir)%(Filename)%(Extension)')"
+          SkipUnchangedFiles="true" />
+
+    <!-- Setup project: top-level files (exclude .pdb and files already copied from main) -->
+    <ItemGroup>
+      <SetupFiles Include="$(SetupOutDir)*.*" Exclude="$(SetupOutDir)*.pdb" />
+    </ItemGroup>
+    <Copy SourceFiles="@(SetupFiles)" DestinationFolder="$(DistribDir)" SkipUnchangedFiles="true" />
+
+    <!-- GUI project: top-level files (exclude .pdb and files already copied from main) -->
+    <PropertyGroup>
+      <GuiOutDir>$(MSBuildThisFileDirectory)..\VPinPerfMon.GUI\bin\$(Configuration)\net10.0-windows\</GuiOutDir>
+    </PropertyGroup>
+    <ItemGroup>
+      <GuiFiles Include="$(GuiOutDir)*.*" Exclude="$(GuiOutDir)*.pdb" />
+    </ItemGroup>
+    <Copy SourceFiles="@(GuiFiles)" DestinationFolder="$(DistribDir)" SkipUnchangedFiles="true" />
+
+    <!-- PresentMon executables from solution-level PresentMon folder -->
+    <ItemGroup>
+      <PresentMonFiles Include="$(MSBuildThisFileDirectory)..\PresentMon\*.exe" />
+    </ItemGroup>
+    <Copy SourceFiles="@(PresentMonFiles)" DestinationFolder="$(DistribDir)" SkipUnchangedFiles="true" />
+  </Target>
+
+</Project>

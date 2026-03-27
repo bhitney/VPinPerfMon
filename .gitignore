@@ -1,0 +1,28 @@
+# Build output
+[Bb]in/
+[Oo]bj/
+[Dd]istrib/
+
+# User-specific files
+*.user
+*.suo
+*.userprefs
+*.rsuser
+
+# VS / Rider
+.vs/
+.idea/
+*.DotSettings.user
+launchSettings.json
+
+# NuGet
+packages/
+*.nupkg
+
+# Runtime settings (generated per-machine)
+VPinPerfMon.GUI.settings.json
+
+# OS
+Thumbs.db
+Desktop.ini
+.DS_Store
