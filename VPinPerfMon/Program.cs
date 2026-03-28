@@ -1951,6 +1951,9 @@ internal class Program
             }
         }
 
+        // Select primary swap chain if multiple are present (e.g., multi-window process)
+        FilterToPrimarySwapChain(perfData);
+
         // Now calculate statistics from the frame data
         if (perfData.PresentMonFrames.Count > 0)
         {
@@ -2344,6 +2347,88 @@ internal class Program
         {
             Console.WriteLine("No frame data found in PresentMon output.");
         }
+    }
+
+    private static void FilterToPrimarySwapChain(PerformanceData perfData)
+    {
+        var groups = perfData.PresentMonFrames
+            .GroupBy(f => f.SwapChainAddress)
+            .Select(g =>
+            {
+                var frames = g.ToList();
+                var gpuBusyFrames = frames.Where(f => f.GPUBusy > 0).ToList();
+                return new
+                {
+                    Address = g.Key,
+                    Frames = frames,
+                    AvgGpuBusy = gpuBusyFrames.Count > 0 ? gpuBusyFrames.Average(f => f.GPUBusy) : 0f,
+                    AvgFrameTime = frames.Where(f => f.FrameTime > 0).Select(f => f.FrameTime).DefaultIfEmpty(0).Average(),
+                    PresentMode = frames.GroupBy(f => f.PresentMode)
+                        .OrderByDescending(pm => pm.Count())
+                        .First().Key
+                };
+            })
+            .OrderByDescending(g => g.Frames.Count)
+            .ToList();
+
+        if (groups.Count <= 1)
+            return;
+
+        Console.WriteLine($"\nMultiple swap chains detected ({groups.Count}):");
+        foreach (var g in groups)
+        {
+            Console.WriteLine($"  {g.Address}: {g.Frames.Count} frames, " +
+                              $"Avg GPU Busy: {g.AvgGpuBusy:F2}ms, " +
+                              $"Avg FrameTime: {g.AvgFrameTime:F2}ms, " +
+                              $"Mode: {g.PresentMode}");
+        }
+
+        var selected = groups[0];
+        string reason = $"most frames ({selected.Frames.Count})";
+
+        // If the top two swap chains have similar frame counts (within 15%),
+        // use tie-breakers to find the primary rendering chain.
+        float ratio = (float)groups[1].Frames.Count / groups[0].Frames.Count;
+        if (ratio >= 0.85f)
+        {
+            // Tie-breaker 1: highest average GPU Busy time
+            var byGpu = groups.OrderByDescending(g => g.AvgGpuBusy).ToList();
+            float gpuRatio = byGpu[0].AvgGpuBusy > 0 && byGpu.Count > 1
+                ? byGpu[1].AvgGpuBusy / byGpu[0].AvgGpuBusy
+                : 0f;
+
+            if (byGpu[0].AvgGpuBusy > 0 && gpuRatio < 0.90f)
+            {
+                selected = byGpu[0];
+                reason = $"highest avg GPU Busy ({selected.AvgGpuBusy:F2}ms)";
+            }
+            else
+            {
+                // Tie-breaker 2: prefer Hardware Composed / Independent Flip present mode
+                var hwFlip = groups.FirstOrDefault(g =>
+                    g.PresentMode.Contains("Hardware", StringComparison.OrdinalIgnoreCase) &&
+                    g.PresentMode.Contains("Flip", StringComparison.OrdinalIgnoreCase));
+
+                if (hwFlip != null)
+                {
+                    selected = hwFlip;
+                    reason = $"Hardware Flip present mode ({selected.PresentMode})";
+                }
+                else
+                {
+                    // Tie-breaker 3: highest average FrameTime (more rendering work)
+                    selected = groups.OrderByDescending(g => g.AvgFrameTime).First();
+                    reason = $"highest avg FrameTime ({selected.AvgFrameTime:F2}ms)";
+                }
+            }
+        }
+
+        Console.WriteLine($"Selected swap chain: {selected.Address} - {reason}");
+
+        int originalCount = perfData.PresentMonFrames.Count;
+        perfData.PresentMonFrames.Clear();
+        perfData.PresentMonFrames.AddRange(selected.Frames);
+        Console.WriteLine($"Filtered from {originalCount} to {perfData.PresentMonFrames.Count} frames.");
     }
 
     private static float CalculateStutterScore(
