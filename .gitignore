@@ -26,3 +26,13 @@ VPinPerfMon.GUI.settings.json
 Thumbs.db
 Desktop.ini
 .DS_Store
+
+# Local reporting data and Python artifacts
+Reporting/**/*.db
+Reporting/**/*.db-*
+Reporting/**/*.csv
+Reporting/**/*.html
+!Reporting/PerfStats_ScatterReport_Demo.html
+Reporting/**/__pycache__/
+Reporting/**/*.py[cod]
+Reporting/.venv/

@@ -1,0 +1,862 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Pinball Table Perf Stats - VPW Demo</title>
+<script>
+  (() => {
+    const param = new URLSearchParams(window.location.search).get("scoutTheme");
+    const theme =
+      param || (window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+    document.documentElement.setAttribute("data-theme", theme);
+  })();
+</script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/hammerjs@2.0.8/hammer.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@2.2.0/dist/chartjs-plugin-zoom.min.js"></script>
+<style>
+  :root {
+    color-scheme: light;
+    --cp-bg: #f7f4ef;
+    --cp-bg-elevated: #fcfbf8;
+    --cp-surface: #ffffff;
+    --cp-surface-soft: #f5f5f5;
+    --cp-border: #dedede;
+    --cp-border-strong: #919191;
+    --cp-text: #242424;
+    --cp-text-muted: #5c5c5c;
+    --cp-text-soft: #6f6f6f;
+    --cp-accent: #b11f4b;
+    --cp-accent-hover: #9a1a41;
+    --cp-accent-soft: rgba(177, 31, 75, 0.08);
+    --cp-accent-fg: #ffffff;
+    --cp-success: #16a34a;
+    --cp-danger: #dc2626;
+    --cp-warning: #f59e0b;
+    --cp-link: #0078d4;
+    --cp-shadow: 0 18px 48px rgba(0, 0, 0, 0.12);
+    --cp-overlay: rgba(255, 255, 255, 0.8);
+    --cp-panel: rgba(255, 255, 255, 0.86);
+    --cp-panel-strong: rgba(255, 255, 255, 0.96);
+    --cp-sheen: rgba(255, 255, 255, 0.55);
+    --cp-highlight: rgba(177, 31, 75, 0.12);
+    --cp-chart-point: #4fd1c5;
+  }
+  html[data-theme="dark"] {
+    color-scheme: dark;
+    --cp-bg: #3d3b3a;
+    --cp-bg-elevated: #343231;
+    --cp-surface: #292929;
+    --cp-surface-soft: #2e2e2e;
+    --cp-border: #474747;
+    --cp-border-strong: #5f5f5f;
+    --cp-text: #dedede;
+    --cp-text-muted: #919191;
+    --cp-text-soft: #b0b0b0;
+    --cp-accent: #fd8ea1;
+    --cp-accent-hover: #fb7b91;
+    --cp-accent-soft: rgba(253, 142, 161, 0.14);
+    --cp-accent-fg: #1a1a1a;
+    --cp-success: #4ade80;
+    --cp-danger: #f87171;
+    --cp-warning: #fbbf24;
+    --cp-link: #4da6ff;
+    --cp-shadow: 0 18px 48px rgba(0, 0, 0, 0.32);
+    --cp-overlay: rgba(41, 41, 41, 0.88);
+    --cp-panel: rgba(41, 41, 41, 0.72);
+    --cp-panel-strong: rgba(41, 41, 41, 0.96);
+    --cp-sheen: rgba(255, 255, 255, 0.04);
+    --cp-highlight: rgba(253, 142, 161, 0.12);
+    --cp-chart-point: #4fd1c5;
+  }
+  body {
+    background: var(--cp-bg); color: var(--cp-text);
+    font-family: "Segoe UI", Aptos, Calibri, -apple-system, BlinkMacSystemFont, sans-serif;
+    margin: 0; padding: 24px;
+  }
+  h1 { font-size: 22px; margin-bottom: 4px; }
+  h2.section { font-size: 17px; margin: 32px 0 10px; border-top: 1px solid var(--cp-border); padding-top: 20px; }
+  p.subtitle { color: var(--cp-text-muted); margin-top: 0; font-size: 13px; }
+  p.muted { color: var(--cp-text-muted); font-size: 13px; }
+  .summary {
+    display: flex; gap: 16px; margin: 16px 0 24px; flex-wrap: wrap;
+  }
+  .summary div {
+    background: var(--cp-surface); border: 1px solid var(--cp-border); border-radius: 0.625rem;
+    padding: 10px 16px; font-size: 13px;
+  }
+  .summary b { font-size: 18px; color: var(--cp-chart-point); display: block; }
+  .grid {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(440px, 1fr));
+    gap: 20px;
+  }
+  .card {
+    background: var(--cp-surface); border: 1px solid var(--cp-border); border-radius: 16px;
+    padding: 14px;
+  }
+  .card.expanded {
+    position: fixed; inset: 16px; z-index: 1000; display: flex; flex-direction: column;
+    background: var(--cp-surface); padding: 20px;
+  }
+  .card.expanded canvas { flex: 1; max-height: none; min-height: 0; }
+  body.chart-expanded { overflow: hidden; }
+  body.chart-expanded::before {
+    content: ""; position: fixed; inset: 0; z-index: 999; background: var(--cp-overlay);
+  }
+  .card h2 { font-size: 14px; margin: 0 0 10px; font-weight: 600; color: var(--cp-text); }
+  canvas { max-height: 340px; }
+  .chart-header {
+    display: flex; align-items: center; justify-content: space-between; gap: 12px;
+    margin-bottom: 10px;
+  }
+  .chart-header h2 { margin: 0; }
+  .chart-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+  .chart-actions button {
+    padding: 6px 10px; border: 1px solid var(--cp-border); border-radius: 0.625rem;
+    background: var(--cp-surface-soft); color: var(--cp-text); cursor: pointer;
+    font: inherit; font-size: 12px;
+  }
+  .chart-actions button:hover { border-color: var(--cp-accent); color: var(--cp-accent); }
+  .chart-help { color: var(--cp-text-muted); font-size: 11px; margin: 0 0 8px; }
+  p.chart-note {
+    color: var(--cp-text-muted); font-size: 12px; margin: 10px 0 0; line-height: 1.5;
+  }
+  .filter-bar {
+    margin-bottom: 18px;
+  }
+  .filter-row {
+    display: flex; gap: 10px; flex-wrap: wrap; align-items: center;
+  }
+  .filter-row ~ .filter-row { margin-top: 10px; }
+  .filter-bar label { color: var(--cp-text-muted); font-size: 13px; }
+  #searchBox, #tableFilter, #ratingFilter, #startDate, #endDate {
+    padding: 8px 12px; border-radius: 0.625rem; border: 1px solid var(--cp-border);
+    background: var(--cp-surface); color: var(--cp-text); font-size: 13px;
+  }
+  #resetDates {
+    padding: 8px 12px; border-radius: 0.625rem; border: 1px solid var(--cp-border);
+    background: var(--cp-surface-soft); color: var(--cp-text); cursor: pointer;
+  }
+  #resetDates:hover { border-color: var(--cp-chart-point); color: var(--cp-chart-point); }
+  #dateFilterError { color: var(--cp-danger); display: block; font-size: 12px; }
+  #searchBox { width: 320px; }
+  #tableFilter { width: 320px; }
+  table.anomaly-table {
+    width: 100%; border-collapse: collapse; font-size: 13px; background: var(--cp-surface);
+    border: 1px solid var(--cp-border); border-radius: 0.625rem; overflow: hidden;
+  }
+  table.anomaly-table th, table.anomaly-table td {
+    text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--cp-border); vertical-align: top;
+  }
+  table.anomaly-table th { color: var(--cp-text-muted); font-weight: 600; }
+  table.anomaly-table tr:last-child td { border-bottom: none; }
+  .score-badge { color: var(--cp-warning); font-weight: 700; }
+  .perf-columns {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(380px, 1fr));
+    gap: 20px;
+  }
+  .perf-columns h3 { font-size: 14px; margin: 0 0 10px; }
+  .perf-columns h3.best { color: var(--cp-success); }
+  .perf-columns h3.worst { color: var(--cp-danger); }
+  ol.perf-list {
+    background: var(--cp-surface); border: 1px solid var(--cp-border); border-radius: 0.625rem;
+    margin: 0; padding: 10px 14px; font-size: 13px; list-style: none;
+  }
+  ol.perf-list li { padding: 6px 0; border-bottom: 1px solid var(--cp-border); }
+  ol.perf-list li:last-child { border-bottom: none; }
+  .perf-list .rank { color: var(--cp-text-muted); font-weight: 600; margin-right: 4px; }
+  .perf-table { font-weight: 600; }
+  footer { color: var(--cp-text-muted); font-size: 12px; margin-top: 30px; }
+</style>
+</head>
+<body>
+<h1>Pinball Table Performance Stats &mdash; VPW Demo</h1>
+<p class="subtitle">VPW-only demo subset from CustomPerfStats_202610131141.csv (PresentMon-based captures) &middot; Generated: 202610131141</p>
+
+<div class="summary">
+  <div><b id="summaryRows"></b>Capture rows</div>
+  <div><b id="summaryTables"></b>Unique tables</div>
+  <div><b id="summaryMissingFps"></b>Rows missing FPS data</div>
+  <div><b id="summaryReruns"></b>Recommended re-runs</div>
+</div>
+
+<div class="filter-bar">
+  <div class="filter-row">
+    <label for="startDate">From</label>
+    <input id="startDate" type="date" min="2026-03-25" max="2026-10-11" value="2026-03-25">
+    <label for="endDate">Through</label>
+    <input id="endDate" type="date" min="2026-03-25" max="2026-10-11" value="2026-10-11">
+    <button id="resetDates" type="button">All dates</button>
+  </div>
+  <span id="dateFilterError" role="alert"></span>
+  <div class="filter-row">
+    <select id="ratingFilter" >
+      <option value="0">All ratings</option>
+      <option value="1">1 or higher</option>
+      <option value="2">2 or higher</option>
+      <option value="3">3 or higher</option>
+      <option value="4">4 or higher</option>
+      <option value="5">5 only</option>
+    </select>
+    <select id="tableFilter">
+      <option value="">All tables (no filter)</option>
+    </select>
+    <input id="searchBox" type="text" placeholder="...or type part of a table name to highlight">
+  </div>
+</div>
+
+
+<div class="grid">
+  <div class="card">
+    <div class="chart-header">
+      <h2>FPS Average vs CPU Average</h2>
+      <div class="chart-actions">
+        <button type="button" class="reset-zoom" data-chart="fpsVsCpu">Reset zoom</button>
+        <button type="button" class="toggle-expand" data-chart="fpsVsCpu">Expand</button>
+      </div>
+    </div>
+    <p class="chart-help">Mouse wheel to zoom &middot; drag to pan</p>
+    <canvas id="fpsVsCpu"></canvas>
+    
+  </div>
+  <div class="card">
+    <div class="chart-header">
+      <h2>FPS Average vs GPU Average</h2>
+      <div class="chart-actions">
+        <button type="button" class="reset-zoom" data-chart="fpsVsGpu">Reset zoom</button>
+        <button type="button" class="toggle-expand" data-chart="fpsVsGpu">Expand</button>
+      </div>
+    </div>
+    <p class="chart-help">Mouse wheel to zoom &middot; drag to pan</p>
+    <canvas id="fpsVsGpu"></canvas>
+    
+  </div>
+  <div class="card">
+    <div class="chart-header">
+      <h2>CPU Average vs GPU Average</h2>
+      <div class="chart-actions">
+        <button type="button" class="reset-zoom" data-chart="cpuVsGpu">Reset zoom</button>
+        <button type="button" class="toggle-expand" data-chart="cpuVsGpu">Expand</button>
+      </div>
+    </div>
+    <p class="chart-help">Mouse wheel to zoom &middot; drag to pan</p>
+    <canvas id="cpuVsGpu"></canvas>
+    
+  </div>
+  <div class="card">
+    <div class="chart-header">
+      <h2>Frame Time Avg vs Frame Time Std Dev (stutter indicator)</h2>
+      <div class="chart-actions">
+        <button type="button" class="reset-zoom" data-chart="frameTimeStability">Reset zoom</button>
+        <button type="button" class="toggle-expand" data-chart="frameTimeStability">Expand</button>
+      </div>
+    </div>
+    <p class="chart-help">Mouse wheel to zoom &middot; drag to pan</p>
+    <canvas id="frameTimeStability"></canvas>
+    
+  </div>
+  <div class="card">
+    <div class="chart-header">
+      <h2>Stutter Score: Frame Time vs Displayed Time</h2>
+      <div class="chart-actions">
+        <button type="button" class="reset-zoom" data-chart="stutterScores">Reset zoom</button>
+        <button type="button" class="toggle-expand" data-chart="stutterScores">Expand</button>
+      </div>
+    </div>
+    <p class="chart-help">Mouse wheel to zoom &middot; drag to pan</p>
+    <canvas id="stutterScores"></canvas>
+    <p class='chart-note'>Both are 0&ndash;100 <b>smoothness</b> scores (higher = better; 100 = no detected stutter). <b>Frame Time</b> measures rendering-pipeline consistency (how evenly the app submits frames); <b>Displayed Time</b> measures perceived visual smoothness (how evenly frames actually land on screen). A perfect 100 on Frame Time but much lower Displayed Time indicates downstream (vsync/compositor/driver) is causing visible hitches.</p>
+  </div>
+  <div class="card">
+    <div class="chart-header">
+      <h2>FPS Average vs GPU Memory Average</h2>
+      <div class="chart-actions">
+        <button type="button" class="reset-zoom" data-chart="fpsVsGpuMem">Reset zoom</button>
+        <button type="button" class="toggle-expand" data-chart="fpsVsGpuMem">Expand</button>
+      </div>
+    </div>
+    <p class="chart-help">Mouse wheel to zoom &middot; drag to pan</p>
+    <canvas id="fpsVsGpuMem"></canvas>
+    
+  </div>
+  <div class="card">
+    <div class="chart-header">
+      <h2>Blame CPU% vs Blame GPU% (bottleneck attribution)</h2>
+      <div class="chart-actions">
+        <button type="button" class="reset-zoom" data-chart="blame">Reset zoom</button>
+        <button type="button" class="toggle-expand" data-chart="blame">Expand</button>
+      </div>
+    </div>
+    <p class="chart-help">Mouse wheel to zoom &middot; drag to pan</p>
+    <canvas id="blame"></canvas>
+    <p class='chart-note'>Based only on the worst (bottom) 1% of frames in the capture, split between CPU-side and GPU-side cause &mdash; the two always add up to 100%. High Blame GPU% means the GPU is the limiting factor on the capture's worst frames; high Blame CPU% points at the CPU/driver side instead.</p>
+  </div>
+  <div class="card">
+    <div class="chart-header">
+      <h2>FPS Average vs 1% Low FPS (consistency)</h2>
+      <div class="chart-actions">
+        <button type="button" class="reset-zoom" data-chart="fps1pctLow">Reset zoom</button>
+        <button type="button" class="toggle-expand" data-chart="fps1pctLow">Expand</button>
+      </div>
+    </div>
+    <p class="chart-help">Mouse wheel to zoom &middot; drag to pan</p>
+    <canvas id="fps1pctLow"></canvas>
+    
+  </div>
+
+</div>
+
+<h2 class="section">Average Performance by Emulator</h2>
+<p class="muted">
+One bubble per emulator &mdash; all of that emulator's captures are averaged together. X axis is average
+GPU utilization, Y axis is average CPU utilization. <b>Bubble size</b> is that emulator's average
+Frame Time Std Dev &mdash; i.e. how "steady"/consistent its pacing is &mdash; so a bigger bubble means a
+less steady emulator, independent of how many captures it has.
+Hover a bubble for the emulator name, capture count, and averaged metrics.
+</p>
+<div class='card'><div class='chart-header'><h2>Emulator averages</h2><div class='chart-actions'><button type='button' class='reset-zoom' data-chart='emuChart'>Reset zoom</button><button type='button' class='toggle-expand' data-chart='emuChart'>Expand</button></div></div><p class='chart-help'>Mouse wheel to zoom &middot; drag to pan</p><canvas id='emuChart'></canvas><p id='emuEmpty' class='muted'></p></div>
+
+<h2 class="section">Top 10 Best / Worst Performing Tables</h2>
+<p class="muted">
+Ranked by a composite <b>Performance Score</b> (0&ndash;100, higher is better). Each table's captures are
+averaged, then the table is percentile-ranked against every other table on the metrics below, which are
+blended using these weights (missing metrics are skipped and the remaining weights re-normalized):
+<br>&bull; <b>60%</b> DisplayedTime stutter score -- the capture tool's recommended perceived-smoothness metric (already blends 99.5%ile/avg frame-time delta, std dev, and animation error internally)<br>&bull; <b>25%</b> Average FPS -- raw throughput (StutterScoreDT self-normalizes to each table's own frame rate, so this is needed to catch slow-but-smooth tables)<br>&bull; <b>15%</b> FPS 1% Low / FPS Average -- tail consistency (how close the worst 1% of frames stay to the average), independent of the other two
+<br>Most of the weight is delegated to the capture tool's recommended perceived-smoothness score
+(DisplayedTime), which already blends the frame-pacing metrics internally &mdash; so std dev and animation
+error aren't scored again separately. Raw FPS is retained because that score self-normalizes to each
+table's own frame rate and is otherwise blind to a table running smoothly but slow. Treat this as a
+starting point for investigation, not an absolute verdict. A &#9888; marks a table that's also in the
+Recommended Re-runs list below, since a flagged capture can pull a table's ranking in either direction.
+</p>
+<div class="perf-columns">
+  <div>
+    <h3 class="best">&#9650; Best performing</h3>
+    <div id="top10Best"></div>
+  </div>
+  <div>
+    <h3 class="worst">&#9660; Worst performing</h3>
+    <div id="top10Worst"></div>
+  </div>
+</div>
+
+<h2 class="section">&#9888; Recommended Re-runs (flagged on &ge;2 metrics)</h2>
+<p class="muted">These captures are statistical outliers vs. the rest of this dataset on multiple independent
+metrics simultaneously (e.g. abnormally low average FPS together with a very wide FPS min/max spread).
+That pattern usually means a transient issue during capture (background load, thermal throttle, a stutter
+mid-run, etc.) rather than a true steady-state result for the table. Re-capturing these is recommended
+before drawing conclusions about the table itself.</p>
+<div id="rerunCandidates"></div>
+
+<h2 class="section">Watch list (flagged on exactly 1 metric)</h2>
+<p class="muted">Single-metric outliers &mdash; worth a glance, but not automatically re-run candidates.</p>
+<div id="watchList"></div>
+
+<footer>Generated by generate_scatter_report.py &mdash; see PERF_STATS_REPORT_PROCESS.md for methodology.</footer>
+
+<script>
+const rawRecords = [{"GameDisplay":"The Matrix (VPW)","EntryDate":"2026-03-26 17:43:40","SampleCount":297,"CpuAverage":12.17323875427246,"GpuAverage":39.58585739135742,"GpuMemoryAverage":24.070707321166992,"FpsAverage":138.01861572265625,"FpsMin":25.8166446685791,"FpsMax":272.34600830078125,"Fps1PctLow":133.48995971679688,"FpsPoint1PctLow":121.30033111572266,"FrameTimeAvg":7.250123023986816,"FrameTimeStdDev":0.2949730474965172,"FrameTimeMax":38.73469924926758,"StutterScoreFT":93.8896255493164,"StutterScoreDT":100.0,"BlameCpuPct":66.13997650146484,"BlameGpuPct":33.86002349853516,"AnimationErrorRMS":0.3899787068367004,"EmuDisplay":"Visual Pinball X","GameRating":5,"Table":"The Matrix (VPW)","SpreadRatio":1.7862037112993119,"ConsistencyRatio":0.967188078346188,"EntryDateDate":"2026-03-26"},{"GameDisplay":"Austin Powers (VPW)","EntryDate":"2026-03-27 21:24:46","SampleCount":212,"CpuAverage":15.14576816558838,"GpuAverage":38.82075500488281,"GpuMemoryAverage":20.82547187805176,"FpsAverage":138.00787353515625,"FpsMin":66.5517578125,"FpsMax":195.75601196289065,"Fps1PctLow":134.7109832763672,"FpsPoint1PctLow":131.37841796875,"FrameTimeAvg":7.246570587158203,"FrameTimeStdDev":0.0739993110268749,"FrameTimeMax":15.02589988708496,"StutterScoreFT":100.0,"StutterScoreDT":100.0,"BlameCpuPct":37.85856246948242,"BlameGpuPct":62.14144134521485,"AnimationErrorRMS":0.0602813363075256,"EmuDisplay":"Visual Pinball X","GameRating":0,"Table":"Austin Powers (VPW)","SpreadRatio":0.936209296185388,"ConsistencyRatio":0.9761108538640789,"EntryDateDate":"2026-03-27"},{"GameDisplay":"Scared Stiff (VPW)","EntryDate":"2026-04-16 00:38:24","SampleCount":298,"CpuAverage":20.14322853088379,"GpuAverage":62.54362487792969,"GpuMemoryAverage":44.02349090576172,"FpsAverage":135.00758361816406,"FpsMin":129.98153686523438,"FpsMax":140.41590881347656,"Fps1PctLow":134.84176635742188,"FpsPoint1PctLow":133.63267517089844,"FrameTimeAvg":7.407000064849853,"FrameTimeStdDev":0.0080016242663653,"FrameTimeMax":7.693399906158447,"StutterScoreFT":100.0,"StutterScoreDT":88.16188049316406,"BlameCpuPct":12.31845760345459,"BlameGpuPct":87.6815414428711,"AnimationErrorRMS":0.3717643022537231,"EmuDisplay":"Visual Pinball X","GameRating":5,"Table":"Scared Stiff (VPW)","SpreadRatio":0.07728730245075163,"ConsistencyRatio":0.998771792988969,"EntryDateDate":"2026-04-16"},{"GameDisplay":"Earthshaker (VPW)","EntryDate":"2026-04-23 16:32:44","SampleCount":297,"CpuAverage":16.96775245666504,"GpuAverage":40.21212005615234,"GpuMemoryAverage":30.154882431030277,"FpsAverage":134.9769287109375,"FpsMin":91.0746841430664,"FpsMax":138.52142333984375,"Fps1PctLow":134.79995727539062,"FpsPoint1PctLow":122.7008819580078,"FrameTimeAvg":7.408883094787598,"FrameTimeStdDev":0.0429056304421805,"FrameTimeMax":10.979999542236328,"StutterScoreFT":100.0,"StutterScoreDT":65.13702392578125,"BlameCpuPct":81.03626251220703,"BlameGpuPct":18.963741302490234,"AnimationErrorRMS":0.6893088817596436,"EmuDisplay":"Visual Pinball X","GameRating":5,"Table":"Earthshaker (VPW)","SpreadRatio":0.3515174011581479,"ConsistencyRatio":0.9986888764084574,"EntryDateDate":"2026-04-23"},{"GameDisplay":"Iron Maiden LOTB Premium (VPW)","EntryDate":"2026-04-23 16:44:31","SampleCount":297,"CpuAverage":14.332327842712402,"GpuAverage":33.24242401123047,"GpuMemoryAverage":19.353534698486328,"FpsAverage":null,"FpsMin":null,"FpsMax":null,"Fps1PctLow":null,"FpsPoint1PctLow":null,"FrameTimeAvg":null,"FrameTimeStdDev":null,"FrameTimeMax":null,"StutterScoreFT":null,"StutterScoreDT":null,"BlameCpuPct":null,"BlameGpuPct":null,"AnimationErrorRMS":null,"EmuDisplay":"Visual Pinball X","GameRating":5,"Table":"Iron Maiden LOTB Premium (VPW)","SpreadRatio":null,"ConsistencyRatio":null,"EntryDateDate":"2026-04-23"},{"GameDisplay":"Guardians of the Galaxy (VPW)","EntryDate":"2026-05-09 04:03:58","SampleCount":66,"CpuAverage":14.003534317016602,"GpuAverage":29.81818199157715,"GpuMemoryAverage":15.696969985961914,"FpsAverage":134.98556518554688,"FpsMin":13.709183692932127,"FpsMax":136.86817932128906,"Fps1PctLow":134.870849609375,"FpsPoint1PctLow":133.8007354736328,"FrameTimeAvg":7.415772914886475,"FrameTimeStdDev":0.7380048055417426,"FrameTimeMax":72.94380187988281,"StutterScoreFT":98.4052963256836,"StutterScoreDT":77.50724792480469,"BlameCpuPct":86.99810791015625,"BlameGpuPct":13.001893043518066,"AnimationErrorRMS":1.331279158592224,"EmuDisplay":"Visual Pinball X","GameRating":5,"Table":"Guardians of the Galaxy (VPW)","SpreadRatio":0.9123864130143582,"ConsistencyRatio":0.9991501641229994,"EntryDateDate":"2026-05-09"},{"GameDisplay":"Medieval Madness (VPW)","EntryDate":"2026-05-12 21:16:22","SampleCount":297,"CpuAverage":20.5117130279541,"GpuAverage":47.6767692565918,"GpuMemoryAverage":30.86868667602539,"FpsAverage":135.0075225830078,"FpsMin":130.3950958251953,"FpsMax":139.95997619628906,"Fps1PctLow":134.88723754882812,"FpsPoint1PctLow":133.95846557617188,"FrameTimeAvg":7.407000064849853,"FrameTimeStdDev":0.0062949558121418,"FrameTimeMax":7.669000148773193,"StutterScoreFT":100.0,"StutterScoreDT":88.88618469238281,"BlameCpuPct":21.778026580810547,"BlameGpuPct":78.22196960449219,"AnimationErrorRMS":0.3304187655448913,"EmuDisplay":"Visual Pinball X","GameRating":5,"Table":"Medieval Madness (VPW)","SpreadRatio":0.07084701791496761,"ConsistencyRatio":0.9991090493931126,"EntryDateDate":"2026-05-12"},{"GameDisplay":"Metallica Premium Monsters (VPW)","EntryDate":"2026-05-19 23:54:36","SampleCount":296,"CpuAverage":15.778911590576172,"GpuAverage":43.83108139038086,"GpuMemoryAverage":33.56418991088867,"FpsAverage":135.00747680664062,"FpsMin":132.93099975585938,"FpsMax":137.22691345214844,"Fps1PctLow":134.89268493652344,"FpsPoint1PctLow":134.0410614013672,"FrameTimeAvg":7.407000064849853,"FrameTimeStdDev":0.0044272151073573,"FrameTimeMax":7.52269983291626,"StutterScoreFT":100.0,"StutterScoreDT":90.32131958007812,"BlameCpuPct":27.02804183959961,"BlameGpuPct":72.97195434570312,"AnimationErrorRMS":0.3148067593574524,"EmuDisplay":"Visual Pinball X","GameRating":5,"Table":"Metallica Premium Monsters (VPW)","SpreadRatio":0.031819820634391406,"ConsistencyRatio":0.9991497369417429,"EntryDateDate":"2026-05-19"},{"GameDisplay":"Twilight Zone (VPW)","EntryDate":"2026-05-25 01:38:11","SampleCount":215,"CpuAverage":18.89950180053711,"GpuAverage":41.63721084594727,"GpuMemoryAverage":30.134883880615234,"FpsAverage":135.00750732421875,"FpsMin":131.75057983398438,"FpsMax":138.41213989257812,"Fps1PctLow":134.8781280517578,"FpsPoint1PctLow":133.89031982421875,"FrameTimeAvg":7.407000064849853,"FrameTimeStdDev":0.0057424448339412,"FrameTimeMax":7.590099811553955,"StutterScoreFT":100.0,"StutterScoreDT":89.62873077392578,"BlameCpuPct":28.399995803833008,"BlameGpuPct":71.5999984741211,"AnimationErrorRMS":0.2780597805976867,"EmuDisplay":"Visual Pinball X","GameRating":5,"Table":"Twilight Zone (VPW)","SpreadRatio":0.04934214541563308,"ConsistencyRatio":0.9990416883103379,"EntryDateDate":"2026-05-25"},{"GameDisplay":"TRON Legacy (VPW)","EntryDate":"2026-05-25 01:41:00","SampleCount":129,"CpuAverage":21.85988998413086,"GpuAverage":43.47286987304688,"GpuMemoryAverage":20.410852432250977,"FpsAverage":null,"FpsMin":null,"FpsMax":null,"Fps1PctLow":null,"FpsPoint1PctLow":null,"FrameTimeAvg":null,"FrameTimeStdDev":null,"FrameTimeMax":null,"StutterScoreFT":null,"StutterScoreDT":null,"BlameCpuPct":null,"BlameGpuPct":null,"AnimationErrorRMS":null,"EmuDisplay":"Visual Pinball X","GameRating":5,"Table":"TRON Legacy (VPW)","SpreadRatio":null,"ConsistencyRatio":null,"EntryDateDate":"2026-05-25"},{"GameDisplay":"Time Fantasy (VPW)","EntryDate":"2026-05-25 01:44:27","SampleCount":108,"CpuAverage":22.961088180541992,"GpuAverage":25.120370864868164,"GpuMemoryAverage":17.94444465637207,"FpsAverage":134.99424743652344,"FpsMin":21.415111541748047,"FpsMax":137.04637145996094,"Fps1PctLow":134.88177490234375,"FpsPoint1PctLow":133.96026611328125,"FrameTimeAvg":7.410416126251221,"FrameTimeStdDev":0.3425544835841078,"FrameTimeMax":46.69599914550781,"StutterScoreFT":100.0,"StutterScoreDT":96.71932220458984,"BlameCpuPct":50.3946533203125,"BlameGpuPct":49.60534286499024,"AnimationErrorRMS":0.5515019297599792,"EmuDisplay":"Visual Pinball X","GameRating":3,"Table":"Time Fantasy (VPW)","SpreadRatio":0.8565643508075013,"ConsistencyRatio":0.9991668346146929,"EntryDateDate":"2026-05-25"},{"GameDisplay":"Stargate (VPW)","EntryDate":"2026-05-25 20:19:15","SampleCount":297,"CpuAverage":19.00092124938965,"GpuAverage":33.969696044921875,"GpuMemoryAverage":21.01346778869629,"FpsAverage":135.00735473632812,"FpsMin":129.45318603515625,"FpsMax":137.96908569335938,"Fps1PctLow":134.8981475830078,"FpsPoint1PctLow":134.0374755859375,"FrameTimeAvg":7.407008171081543,"FrameTimeStdDev":0.0053452101793351,"FrameTimeMax":7.724800109863281,"StutterScoreFT":100.0,"StutterScoreDT":89.39448547363281,"BlameCpuPct":28.2807674407959,"BlameGpuPct":71.71923065185547,"AnimationErrorRMS":0.2988259792327881,"EmuDisplay":"Visual Pinball X","GameRating":5,"Table":"Stargate (VPW)","SpreadRatio":0.06307730178726066,"ConsistencyRatio":0.9991911021919243,"EntryDateDate":"2026-05-25"},{"GameDisplay":"TRON Legacy (VPW)","EntryDate":"2026-06-07 20:12:46","SampleCount":199,"CpuAverage":20.569292068481445,"GpuAverage":44.206031799316406,"GpuMemoryAverage":20.18090438842773,"FpsAverage":null,"FpsMin":null,"FpsMax":null,"Fps1PctLow":null,"FpsPoint1PctLow":null,"FrameTimeAvg":null,"FrameTimeStdDev":null,"FrameTimeMax":null,"StutterScoreFT":null,"StutterScoreDT":null,"BlameCpuPct":null,"BlameGpuPct":null,"AnimationErrorRMS":null,"EmuDisplay":"Visual Pinball X","GameRating":5,"Table":"TRON Legacy (VPW)","SpreadRatio":null,"ConsistencyRatio":null,"EntryDateDate":"2026-06-07"},{"GameDisplay":"Bride of Pinbot 2.0 (VPW)","EntryDate":"2026-06-13 03:50:46","SampleCount":119,"CpuAverage":14.998388290405272,"GpuAverage":39.96638488769531,"GpuMemoryAverage":18.689075469970703,"FpsAverage":134.98223876953125,"FpsMin":3.756455421447754,"FpsMax":141.00791931152344,"Fps1PctLow":134.8654022216797,"FpsPoint1PctLow":133.84552001953125,"FrameTimeAvg":7.425971508026123,"FrameTimeStdDev":2.114775059392181,"FrameTimeMax":266.2084045410156,"StutterScoreFT":92.85344696044922,"StutterScoreDT":78.74531555175781,"BlameCpuPct":96.75788879394533,"BlameGpuPct":3.242105722427368,"AnimationErrorRMS":3.0707390308380127,"EmuDisplay":"Visual Pinball X","GameRating":5,"Table":"Bride of Pinbot 2.0 (VPW)","SpreadRatio":1.01681128673839,"ConsistencyRatio":0.9991344302115848,"EntryDateDate":"2026-06-13"},{"GameDisplay":"Bride of Pinbot 2.0 (VPW)","EntryDate":"2026-06-15 03:50:08","SampleCount":250,"CpuAverage":13.449049949645996,"GpuAverage":41.65999984741211,"GpuMemoryAverage":19.13999938964844,"FpsAverage":135.0024871826172,"FpsMin":12.997325897216797,"FpsMax":137.86448669433594,"Fps1PctLow":134.8726806640625,"FpsPoint1PctLow":133.87060546875,"FrameTimeAvg":7.40922212600708,"FrameTimeStdDev":0.3841579116399683,"FrameTimeMax":76.93890380859375,"StutterScoreFT":100.0,"StutterScoreDT":86.23194122314453,"BlameCpuPct":44.7889289855957,"BlameGpuPct":55.21107482910156,"AnimationErrorRMS":0.7098598480224609,"EmuDisplay":"Visual Pinball X","GameRating":5,"Table":"Bride of Pinbot 2.0 (VPW)","SpreadRatio":0.9249248914074595,"ConsistencyRatio":0.9990384879474176,"EntryDateDate":"2026-06-15"},{"GameDisplay":"Bride of Pinbot 2.0 (VPW)","EntryDate":"2026-07-02 21:27:29","SampleCount":297,"CpuAverage":12.809959411621094,"GpuAverage":38.58249282836914,"GpuMemoryAverage":18.32659912109375,"FpsAverage":134.9971923828125,"FpsMin":11.349359512329102,"FpsMax":137.81507873535156,"Fps1PctLow":134.870849609375,"FpsPoint1PctLow":133.96923828125,"FrameTimeAvg":7.40975284576416,"FrameTimeStdDev":0.4105684187231679,"FrameTimeMax":88.11070251464844,"StutterScoreFT":100.0,"StutterScoreDT":85.70541381835938,"BlameCpuPct":72.73611450195312,"BlameGpuPct":27.26388931274414,"AnimationErrorRMS":0.6744699478149414,"EmuDisplay":"Visual Pinball X","GameRating":5,"Table":"Bride of Pinbot 2.0 (VPW)","SpreadRatio":0.9368025881931138,"ConsistencyRatio":0.9990641081402698,"EntryDateDate":"2026-07-02"},{"GameDisplay":"Bride of Pinbot 2.0 (VPW)","EntryDate":"2026-07-02 21:37:39","SampleCount":297,"CpuAverage":12.329622268676758,"GpuAverage":38.68687057495117,"GpuMemoryAverage":18.42424201965332,"FpsAverage":135.0074920654297,"FpsMin":131.36634826660156,"FpsMax":138.82333374023438,"Fps1PctLow":134.8799591064453,"FpsPoint1PctLow":133.97821044921875,"FrameTimeAvg":7.407000064849853,"FrameTimeStdDev":0.0051583532896442,"FrameTimeMax":7.612299919128418,"StutterScoreFT":100.0,"StutterScoreDT":85.91400146484375,"BlameCpuPct":49.054176330566406,"BlameGpuPct":50.9458236694336,"AnimationErrorRMS":0.3838952183723449,"EmuDisplay":"Visual Pinball X","GameRating":5,"Table":"Bride of Pinbot 2.0 (VPW)","SpreadRatio":0.055233864132657746,"ConsistencyRatio":0.9990553638391967,"EntryDateDate":"2026-07-02"},{"GameDisplay":"Bride of Pinbot 2.0 (VPW)","EntryDate":"2026-07-04 02:06:47","SampleCount":297,"CpuAverage":13.173622131347656,"GpuAverage":38.61279296875,"GpuMemoryAverage":18.518518447875977,"FpsAverage":135.00698852539062,"FpsMin":114.6315689086914,"FpsMax":139.35145568847656,"Fps1PctLow":134.87449645996094,"FpsPoint1PctLow":133.9818115234375,"FrameTimeAvg":7.4070329666137695,"FrameTimeStdDev":0.008689921518157,"FrameTimeMax":8.723600387573242,"StutterScoreFT":100.0,"StutterScoreDT":83.12947082519531,"BlameCpuPct":51.25868988037109,"BlameGpuPct":48.74130630493164,"AnimationErrorRMS":0.4554908871650696,"EmuDisplay":"Visual Pinball X","GameRating":5,"Table":"Bride of Pinbot 2.0 (VPW)","SpreadRatio":0.1831007938906519,"ConsistencyRatio":0.9990186280956502,"EntryDateDate":"2026-07-04"},{"GameDisplay":"Bride of Pinbot 2.0 (VPW)","EntryDate":"2026-07-10 01:26:15","SampleCount":195,"CpuAverage":12.737509727478027,"GpuAverage":37.61538314819336,"GpuMemoryAverage":18.89230728149414,"FpsAverage":135.0074920654297,"FpsMin":132.92039489746094,"FpsMax":137.1629180908203,"Fps1PctLow":134.8799591064453,"FpsPoint1PctLow":134.03567504882812,"FrameTimeAvg":7.407000064849853,"FrameTimeStdDev":0.0050047583889707,"FrameTimeMax":7.523300170898437,"StutterScoreFT":100.0,"StutterScoreDT":84.51194763183594,"BlameCpuPct":50.27445983886719,"BlameGpuPct":49.72553634643555,"AnimationErrorRMS":0.4378998279571533,"EmuDisplay":"Visual Pinball X","GameRating":5,"Table":"Bride of Pinbot 2.0 (VPW)","SpreadRatio":0.03142435377810951,"ConsistencyRatio":0.9990553638391967,"EntryDateDate":"2026-07-10"},{"GameDisplay":"Ice Fever (VPW)","EntryDate":"2026-07-15 02:01:29","SampleCount":77,"CpuAverage":35.17092514038086,"GpuAverage":38.01298522949219,"GpuMemoryAverage":26.467533111572266,"FpsAverage":134.97740173339844,"FpsMin":10.245848655700684,"FpsMax":138.3202362060547,"Fps1PctLow":134.8435821533203,"FpsPoint1PctLow":133.27291870117188,"FrameTimeAvg":7.426236152648926,"FrameTimeStdDev":1.307406812236583,"FrameTimeMax":97.60050201416016,"StutterScoreFT":95.77352905273438,"StutterScoreDT":45.2070426940918,"BlameCpuPct":85.96541595458984,"BlameGpuPct":14.034578323364258,"AnimationErrorRMS":1.9970663785934448,"EmuDisplay":"Visual Pinball X","GameRating":0,"Table":"Ice Fever (VPW)","SpreadRatio":0.9488580007142309,"ConsistencyRatio":0.9990085778925983,"EntryDateDate":"2026-07-15"},{"GameDisplay":"Defender (VPW)","EntryDate":"2026-07-20 00:09:19","SampleCount":81,"CpuAverage":33.47240447998047,"GpuAverage":33.51852035522461,"GpuMemoryAverage":13.679012298583984,"FpsAverage":134.98416137695312,"FpsMin":22.62156867980957,"FpsMax":137.51185607910156,"Fps1PctLow":134.85086059570312,"FpsPoint1PctLow":133.43296813964844,"FrameTimeAvg":7.411899089813232,"FrameTimeStdDev":0.3794079916416193,"FrameTimeMax":44.20560073852539,"StutterScoreFT":99.9512710571289,"StutterScoreDT":74.03993225097656,"BlameCpuPct":62.90311813354492,"BlameGpuPct":37.09688568115234,"AnimationErrorRMS":0.7587367296218872,"EmuDisplay":"Visual Pinball X","GameRating":0,"Table":"Defender (VPW)","SpreadRatio":0.8511390242182005,"ConsistencyRatio":0.9990124709455522,"EntryDateDate":"2026-07-20"},{"GameDisplay":"Spectrum (VPW)","EntryDate":"2026-07-20 00:24:57","SampleCount":66,"CpuAverage":38.684547424316406,"GpuAverage":33.6363639831543,"GpuMemoryAverage":25.636363983154297,"FpsAverage":134.95301818847656,"FpsMin":12.03789520263672,"FpsMax":137.01821899414062,"Fps1PctLow":134.8472137451172,"FpsPoint1PctLow":133.134521484375,"FrameTimeAvg":7.428813457489014,"FrameTimeStdDev":1.147973337423842,"FrameTimeMax":83.07099914550781,"StutterScoreFT":96.67279052734376,"StutterScoreDT":83.82671356201172,"BlameCpuPct":68.32372283935547,"BlameGpuPct":31.676271438598636,"AnimationErrorRMS":1.649918556213379,"EmuDisplay":"Visual Pinball X","GameRating":0,"Table":"Spectrum (VPW)","SpreadRatio":0.9261024723208139,"ConsistencyRatio":0.9992159905367095,"EntryDateDate":"2026-07-20"},{"GameDisplay":"Cybernaut (VPW)","EntryDate":"2026-07-24 03:31:37","SampleCount":106,"CpuAverage":44.928367614746094,"GpuAverage":38.67924499511719,"GpuMemoryAverage":28.51886749267578,"FpsAverage":134.9875030517578,"FpsMin":8.46511459350586,"FpsMax":139.01632690429688,"Fps1PctLow":134.85086059570312,"FpsPoint1PctLow":133.5701904296875,"FrameTimeAvg":7.42021894454956,"FrameTimeStdDev":1.108089598254376,"FrameTimeMax":118.13189697265624,"StutterScoreFT":96.68104553222656,"StutterScoreDT":80.70663452148438,"BlameCpuPct":87.08682250976562,"BlameGpuPct":12.913174629211426,"AnimationErrorRMS":1.7235747575759888,"EmuDisplay":"Visual Pinball X","GameRating":4,"Table":"Cybernaut (VPW)","SpreadRatio":0.9671355448417636,"ConsistencyRatio":0.9989877399539548,"EntryDateDate":"2026-07-24"},{"GameDisplay":"Iron Maiden LOTB Premium (VPW)","EntryDate":"2026-07-31 21:54:29","SampleCount":297,"CpuAverage":18.073827743530277,"GpuAverage":31.72390556335449,"GpuMemoryAverage":18.86532020568848,"FpsAverage":null,"FpsMin":null,"FpsMax":null,"Fps1PctLow":null,"FpsPoint1PctLow":null,"FrameTimeAvg":null,"FrameTimeStdDev":null,"FrameTimeMax":null,"StutterScoreFT":null,"StutterScoreDT":null,"BlameCpuPct":null,"BlameGpuPct":null,"AnimationErrorRMS":null,"EmuDisplay":"Visual Pinball X","GameRating":5,"Table":"Iron Maiden LOTB Premium (VPW)","SpreadRatio":null,"ConsistencyRatio":null,"EntryDateDate":"2026-07-31"},{"GameDisplay":"Lethal Weapon 3 (VPW)","EntryDate":"2026-07-31 22:02:17","SampleCount":296,"CpuAverage":15.144667625427246,"GpuAverage":27.6452693939209,"GpuMemoryAverage":21.027027130126957,"FpsAverage":135.0054168701172,"FpsMin":87.96544647216797,"FpsMax":140.0462188720703,"Fps1PctLow":134.89451599121094,"FpsPoint1PctLow":134.06622314453125,"FrameTimeAvg":7.407163143157959,"FrameTimeStdDev":0.0237787985475816,"FrameTimeMax":11.3681001663208,"StutterScoreFT":100.0,"StutterScoreDT":90.60618591308594,"BlameCpuPct":37.70345687866211,"BlameGpuPct":62.29654693603516,"AnimationErrorRMS":0.2661369144916534,"EmuDisplay":"Visual Pinball X","GameRating":0,"Table":"Lethal Weapon 3 (VPW)","SpreadRatio":0.3857680203306729,"ConsistencyRatio":0.9991785449689553,"EntryDateDate":"2026-07-31"},{"GameDisplay":"Harlem Globetrotters (VPW)","EntryDate":"2026-08-01 03:45:42","SampleCount":70,"CpuAverage":32.69749069213867,"GpuAverage":36.25714111328125,"GpuMemoryAverage":25.071428298950195,"FpsAverage":134.97866821289062,"FpsMin":14.2552490234375,"FpsMax":138.33937072753906,"Fps1PctLow":134.84539794921875,"FpsPoint1PctLow":133.7828369140625,"FrameTimeAvg":7.416040897369385,"FrameTimeStdDev":0.6952968094457375,"FrameTimeMax":70.14959716796875,"StutterScoreFT":99.35066223144533,"StutterScoreDT":82.79845428466797,"BlameCpuPct":68.05174255371094,"BlameGpuPct":31.948265075683597,"AnimationErrorRMS":0.9811679124832152,"EmuDisplay":"Visual Pinball X","GameRating":0,"Table":"Harlem Globetrotters (VPW)","SpreadRatio":0.9192869017524606,"ConsistencyRatio":0.9990126568484016,"EntryDateDate":"2026-08-01"},{"GameDisplay":"Iron Maiden LOTB Premium (VPW)","EntryDate":"2026-08-02 21:56:21","SampleCount":297,"CpuAverage":18.21656608581543,"GpuAverage":31.212121963500977,"GpuMemoryAverage":19.090909957885746,"FpsAverage":null,"FpsMin":null,"FpsMax":null,"Fps1PctLow":null,"FpsPoint1PctLow":null,"FrameTimeAvg":null,"FrameTimeStdDev":null,"FrameTimeMax":null,"StutterScoreFT":null,"StutterScoreDT":null,"BlameCpuPct":null,"BlameGpuPct":null,"AnimationErrorRMS":null,"EmuDisplay":"Visual Pinball X","GameRating":5,"Table":"Iron Maiden LOTB Premium (VPW)","SpreadRatio":null,"ConsistencyRatio":null,"EntryDateDate":"2026-08-02"},{"GameDisplay":"The Matrix (VPW)","EntryDate":"2026-08-29 20:51:27","SampleCount":297,"CpuAverage":14.555571556091309,"GpuAverage":34.61616134643555,"GpuMemoryAverage":21.531986236572266,"FpsAverage":134.9303436279297,"FpsMin":26.2497501373291,"FpsMax":137.53834533691406,"Fps1PctLow":134.86358642578125,"FpsPoint1PctLow":90.87604522705078,"FrameTimeAvg":7.4160075187683105,"FrameTimeStdDev":0.3269404187804712,"FrameTimeMax":38.09560012817383,"StutterScoreFT":99.73392486572266,"StutterScoreDT":59.712493896484375,"BlameCpuPct":78.41484832763672,"BlameGpuPct":21.58514976501465,"AnimationErrorRMS":0.839230477809906,"EmuDisplay":"Visual Pinball X","GameRating":5,"Table":"The Matrix (VPW)","SpreadRatio":0.8247855316107633,"ConsistencyRatio":0.999505246927018,"EntryDateDate":"2026-08-29"},{"GameDisplay":"Shadow, The (VPW)","EntryDate":"2026-08-29 21:00:39","SampleCount":297,"CpuAverage":18.113378524780277,"GpuAverage":28.720539093017575,"GpuMemoryAverage":19.060606002807617,"FpsAverage":135.0058135986328,"FpsMin":97.84544372558594,"FpsMax":138.0929412841797,"Fps1PctLow":134.88540649414062,"FpsPoint1PctLow":134.00514221191406,"FrameTimeAvg":7.407121658325195,"FrameTimeStdDev":0.0180536668384704,"FrameTimeMax":10.220199584960938,"StutterScoreFT":100.0,"StutterScoreDT":88.44471740722656,"BlameCpuPct":39.25664520263672,"BlameGpuPct":60.74336242675781,"AnimationErrorRMS":0.3410685956478119,"EmuDisplay":"Visual Pinball X","GameRating":3,"Table":"Shadow, The (VPW)","SpreadRatio":0.2981167735357534,"ConsistencyRatio":0.9991081339293273,"EntryDateDate":"2026-08-29"},{"GameDisplay":"Genesis (VPW)","EntryDate":"2026-08-30 17:48:31","SampleCount":275,"CpuAverage":19.00799560546875,"GpuAverage":34.21091079711914,"GpuMemoryAverage":23.763635635375977,"FpsAverage":134.99696350097656,"FpsMin":8.851781845092773,"FpsMax":137.37017822265625,"Fps1PctLow":134.88177490234375,"FpsPoint1PctLow":133.97821044921875,"FrameTimeAvg":7.41051435470581,"FrameTimeStdDev":0.55773970098091,"FrameTimeMax":112.97160339355467,"StutterScoreFT":99.82904052734376,"StutterScoreDT":92.1025619506836,"BlameCpuPct":64.46746826171875,"BlameGpuPct":35.53253555297852,"AnimationErrorRMS":0.8040146231651306,"EmuDisplay":"Visual Pinball X","GameRating":0,"Table":"Genesis (VPW)","SpreadRatio":0.9520095344710015,"ConsistencyRatio":0.9991467319290335,"EntryDateDate":"2026-08-30"},{"GameDisplay":"Game of Thrones LE (Videos) (VPW)","EntryDate":"2026-09-12 17:29:27","SampleCount":71,"CpuAverage":34.96826934814453,"GpuAverage":29.64788818359375,"GpuMemoryAverage":19.21126747131348,"FpsAverage":134.94053649902344,"FpsMin":4.711527347564697,"FpsMax":158.43341064453125,"Fps1PctLow":134.80722045898438,"FpsPoint1PctLow":124.90787506103516,"FrameTimeAvg":7.441314220428467,"FrameTimeStdDev":2.3262406232615223,"FrameTimeMax":212.2454071044922,"StutterScoreFT":92.18770599365234,"StutterScoreDT":52.6143684387207,"BlameCpuPct":98.02223205566406,"BlameGpuPct":1.9777708053588867,"AnimationErrorRMS":3.2115628719329834,"EmuDisplay":"Visual Pinball X","GameRating":5,"Table":"Game of Thrones LE (Videos) (VPW)","SpreadRatio":1.1391823931134217,"ConsistencyRatio":0.9990120386097618,"EntryDateDate":"2026-09-12"},{"GameDisplay":"AC-DC LUCI - Vault Edition (VPW)","EntryDate":"2026-09-20 18:00:39","SampleCount":23,"CpuAverage":18.186899185180664,"GpuAverage":32.260868072509766,"GpuMemoryAverage":18.2608699798584,"FpsAverage":null,"FpsMin":null,"FpsMax":null,"Fps1PctLow":null,"FpsPoint1PctLow":null,"FrameTimeAvg":null,"FrameTimeStdDev":null,"FrameTimeMax":null,"StutterScoreFT":null,"StutterScoreDT":null,"BlameCpuPct":null,"BlameGpuPct":null,"AnimationErrorRMS":null,"EmuDisplay":"Visual Pinball X","GameRating":5,"Table":"AC-DC LUCI - Vault Edition (VPW)","SpreadRatio":null,"ConsistencyRatio":null,"EntryDateDate":"2026-09-20"},{"GameDisplay":"Heavy Metal (VPW)","EntryDate":"2026-09-28 01:51:39","SampleCount":129,"CpuAverage":26.071685791015625,"GpuAverage":28.20930290222168,"GpuMemoryAverage":22.23255729675293,"FpsAverage":135.00746154785156,"FpsMin":133.8347625732422,"FpsMax":136.18597412109375,"Fps1PctLow":134.89633178710938,"FpsPoint1PctLow":134.0608367919922,"FrameTimeAvg":7.407000064849853,"FrameTimeStdDev":0.0042735897427865,"FrameTimeMax":7.47189998626709,"StutterScoreFT":100.0,"StutterScoreDT":91.10975646972656,"BlameCpuPct":32.78468322753906,"BlameGpuPct":67.21531677246094,"AnimationErrorRMS":0.2421812117099762,"EmuDisplay":"Visual Pinball X","GameRating":4,"Table":"Heavy Metal (VPW)","SpreadRatio":0.01741541927309112,"ConsistencyRatio":0.9991768620825242,"EntryDateDate":"2026-09-28"},{"GameDisplay":"Bride of Pinbot 2.0 (VPW)","EntryDate":"2026-10-04 03:53:19","SampleCount":243,"CpuAverage":14.62302303314209,"GpuAverage":39.49794387817383,"GpuMemoryAverage":20.09053421020508,"FpsAverage":135.0072479248047,"FpsMin":126.04141998291016,"FpsMax":140.35678100585938,"Fps1PctLow":134.86721801757812,"FpsPoint1PctLow":133.94232177734375,"FrameTimeAvg":7.407016754150391,"FrameTimeStdDev":0.0070193223086647,"FrameTimeMax":7.933899879455566,"StutterScoreFT":100.0,"StutterScoreDT":82.64344787597656,"BlameCpuPct":50.6204948425293,"BlameGpuPct":49.379493713378906,"AnimationErrorRMS":0.4785198271274566,"EmuDisplay":"Visual Pinball X","GameRating":5,"Table":"Bride of Pinbot 2.0 (VPW)","SpreadRatio":0.10603401849152928,"ConsistencyRatio":0.9989627971136442,"EntryDateDate":"2026-10-04"},{"GameDisplay":"Tales from the Crypt (VPW)","EntryDate":"2026-10-04 18:13:10","SampleCount":296,"CpuAverage":18.79466438293457,"GpuAverage":38.72297286987305,"GpuMemoryAverage":21.51013565063477,"FpsAverage":null,"FpsMin":null,"FpsMax":null,"Fps1PctLow":null,"FpsPoint1PctLow":null,"FrameTimeAvg":null,"FrameTimeStdDev":null,"FrameTimeMax":null,"StutterScoreFT":null,"StutterScoreDT":null,"BlameCpuPct":null,"BlameGpuPct":null,"AnimationErrorRMS":null,"EmuDisplay":"Visual Pinball X","GameRating":4,"Table":"Tales from the Crypt (VPW)","SpreadRatio":null,"ConsistencyRatio":null,"EntryDateDate":"2026-10-04"},{"GameDisplay":"Scared Stiff (VPW)","EntryDate":"2026-10-04 18:19:44","SampleCount":297,"CpuAverage":19.846899032592773,"GpuAverage":61.272727966308594,"GpuMemoryAverage":44.40740585327149,"FpsAverage":135.0070037841797,"FpsMin":114.53047943115234,"FpsMax":140.19346618652344,"Fps1PctLow":134.8799591064453,"FpsPoint1PctLow":133.94412231445312,"FrameTimeAvg":7.407033920288086,"FrameTimeStdDev":0.0092387643956312,"FrameTimeMax":8.731300354003906,"StutterScoreFT":100.0,"StutterScoreDT":88.07817077636719,"BlameCpuPct":13.692615509033203,"BlameGpuPct":86.30738830566406,"AnimationErrorRMS":0.3824449181556701,"EmuDisplay":"Visual Pinball X","GameRating":5,"Table":"Scared Stiff (VPW)","SpreadRatio":0.19008633653107054,"ConsistencyRatio":0.9990589771332348,"EntryDateDate":"2026-10-04"},{"GameDisplay":"Total Nuclear Annihilation (VPW)","EntryDate":"2026-10-05 03:47:36","SampleCount":297,"CpuAverage":14.127328872680664,"GpuAverage":29.272727966308597,"GpuMemoryAverage":15.949495315551758,"FpsAverage":135.00682067871094,"FpsMin":108.6047592163086,"FpsMax":139.68040466308594,"Fps1PctLow":134.8799591064453,"FpsPoint1PctLow":134.00514221191406,"FrameTimeAvg":7.407045364379883,"FrameTimeStdDev":0.0103937397239101,"FrameTimeMax":9.2076997756958,"StutterScoreFT":100.0,"StutterScoreDT":74.45463562011719,"BlameCpuPct":49.01368713378906,"BlameGpuPct":50.98631286621094,"AnimationErrorRMS":0.4936850070953369,"EmuDisplay":"Visual Pinball X","GameRating":5,"Table":"Total Nuclear Annihilation (VPW)","SpreadRatio":0.2301783368466333,"ConsistencyRatio":0.9990603321252374,"EntryDateDate":"2026-10-05"},{"GameDisplay":"Genesis (VPW)","EntryDate":"2026-10-06 03:13:17","SampleCount":81,"CpuAverage":15.773180961608888,"GpuAverage":35.13580322265625,"GpuMemoryAverage":25.02469062805176,"FpsAverage":134.98536682128906,"FpsMin":13.869318008422852,"FpsMax":150.5842742919922,"Fps1PctLow":134.88177490234375,"FpsPoint1PctLow":133.60232543945312,"FrameTimeAvg":7.414278507232666,"FrameTimeStdDev":0.654099618561397,"FrameTimeMax":72.10160064697266,"StutterScoreFT":98.96321105957033,"StutterScoreDT":85.974365234375,"BlameCpuPct":82.86417388916016,"BlameGpuPct":17.13581657409668,"AnimationErrorRMS":1.124675154685974,"EmuDisplay":"Visual Pinball X","GameRating":0,"Table":"Genesis (VPW)","SpreadRatio":1.012813162663551,"ConsistencyRatio":0.9992325692674343,"EntryDateDate":"2026-10-06"},{"GameDisplay":"Red & Ted's Road Show (VPW)","EntryDate":"2026-10-07 04:14:26","SampleCount":264,"CpuAverage":53.23127746582031,"GpuAverage":39.45833206176758,"GpuMemoryAverage":15.83712100982666,"FpsAverage":135.00250244140625,"FpsMin":7.433550834655762,"FpsMax":153.22618103027344,"Fps1PctLow":134.82176208496094,"FpsPoint1PctLow":133.66839599609375,"FrameTimeAvg":7.410511493682861,"FrameTimeStdDev":0.6494334061109355,"FrameTimeMax":134.52520751953125,"StutterScoreFT":99.41558074951172,"StutterScoreDT":86.59567260742188,"BlameCpuPct":61.76253128051758,"BlameGpuPct":38.23746871948242,"AnimationErrorRMS":0.9571393728256226,"EmuDisplay":"Visual Pinball X","GameRating":0,"Table":"Red & Ted's Road Show (VPW)","SpreadRatio":1.07992539070818,"ConsistencyRatio":0.9986612073615172,"EntryDateDate":"2026-10-07"},{"GameDisplay":"Cirqus Voltaire (VPW)","EntryDate":"2026-10-11 01:26:47","SampleCount":64,"CpuAverage":93.21154022216795,"GpuAverage":34.453125,"GpuMemoryAverage":21.828125,"FpsAverage":135.00758361816406,"FpsMin":132.61720275878906,"FpsMax":137.4853973388672,"Fps1PctLow":134.7981414794922,"FpsPoint1PctLow":133.393798828125,"FrameTimeAvg":7.406999588012695,"FrameTimeStdDev":0.00787989985951,"FrameTimeMax":7.540500164031982,"StutterScoreFT":100.0,"StutterScoreDT":84.36322021484375,"BlameCpuPct":45.57851409912109,"BlameGpuPct":54.421485900878906,"AnimationErrorRMS":0.438500702381134,"EmuDisplay":"Visual Pinball X","GameRating":5,"Table":"Cirqus Voltaire (VPW)","SpreadRatio":0.03605867499892912,"ConsistencyRatio":0.9984486638968058,"EntryDateDate":"2026-10-11"},{"GameDisplay":"Cybernaut (VPW)","EntryDate":"2026-10-11 01:29:23","SampleCount":109,"CpuAverage":20.340177536010746,"GpuAverage":34.72476959228516,"GpuMemoryAverage":27.17431259155273,"FpsAverage":134.9987030029297,"FpsMin":14.575900077819824,"FpsMax":136.9019012451172,"Fps1PctLow":134.88360595703125,"FpsPoint1PctLow":134.0572509765625,"FrameTimeAvg":7.411452293395996,"FrameTimeStdDev":0.5219475901334307,"FrameTimeMax":68.60639953613281,"StutterScoreFT":99.7048797607422,"StutterScoreDT":93.4607925415039,"BlameCpuPct":28.257761001586918,"BlameGpuPct":71.74223327636719,"AnimationErrorRMS":0.8499975204467773,"EmuDisplay":"Visual Pinball X","GameRating":4,"Table":"Cybernaut (VPW)","SpreadRatio":0.9061272326789888,"ConsistencyRatio":0.9991474210985869,"EntryDateDate":"2026-10-11"},{"GameDisplay":"No Good Gofers (VPW)","EntryDate":"2026-10-11 01:33:30","SampleCount":0,"CpuAverage":null,"GpuAverage":null,"GpuMemoryAverage":null,"FpsAverage":null,"FpsMin":null,"FpsMax":null,"Fps1PctLow":null,"FpsPoint1PctLow":null,"FrameTimeAvg":null,"FrameTimeStdDev":null,"FrameTimeMax":null,"StutterScoreFT":null,"StutterScoreDT":null,"BlameCpuPct":null,"BlameGpuPct":null,"AnimationErrorRMS":null,"EmuDisplay":"Visual Pinball X","GameRating":0,"Table":"No Good Gofers (VPW)","SpreadRatio":null,"ConsistencyRatio":null,"EntryDateDate":"2026-10-11"},{"GameDisplay":"No Good Gofers (VPW)","EntryDate":"2026-10-11 01:33:31","SampleCount":131,"CpuAverage":64.35948944091797,"GpuAverage":35.60305404663086,"GpuMemoryAverage":25.213741302490234,"FpsAverage":134.9781494140625,"FpsMin":8.125015258789062,"FpsMax":137.9614715576172,"Fps1PctLow":134.81268310546875,"FpsPoint1PctLow":133.34043884277344,"FrameTimeAvg":7.42249059677124,"FrameTimeStdDev":1.106399512101845,"FrameTimeMax":123.07669830322266,"StutterScoreFT":96.99983978271484,"StutterScoreDT":76.24466705322266,"BlameCpuPct":48.71582794189453,"BlameGpuPct":51.28416442871094,"AnimationErrorRMS":1.4907736778259275,"EmuDisplay":"Visual Pinball X","GameRating":0,"Table":"No Good Gofers (VPW)","SpreadRatio":0.9619072187790811,"ConsistencyRatio":0.9987741252246232,"EntryDateDate":"2026-10-11"}];
+const anomalySpecs = [["FpsAverage", "low", "Average FPS unusually low vs. the rest of the dataset"], ["CpuAverage", "high", "CPU utilization unusually high (possible CPU-bound/contended run)"], ["GpuAverage", "high", "GPU utilization unusually high (possible GPU-bound/contended run)"], ["FrameTimeStdDev", "high", "Frame time variance unusually high (uneven pacing)"], ["AnimationErrorRMS", "high", "Animation error unusually high (visible judder/stutter)"], ["SpreadRatio", "high", "FPS min/max spread unusually wide relative to average (transient hitch)"]];
+const performanceScoreWeights = [["StutterScoreDT", "high", 0.6, "DisplayedTime stutter score -- the capture tool's recommended perceived-smoothness metric (already blends 99.5%ile/avg frame-time delta, std dev, and animation error internally)"], ["FpsAverage", "high", 0.25, "Average FPS -- raw throughput (StutterScoreDT self-normalizes to each table's own frame rate, so this is needed to catch slow-but-smooth tables)"], ["ConsistencyRatio", "high", 0.15, "FPS 1% Low / FPS Average -- tail consistency (how close the worst 1% of frames stay to the average), independent of the other two"]];
+const chartDefs = [{"id": "fpsVsCpu", "title": "FPS Average vs CPU Average", "x": "CpuAverage", "y": "FpsAverage", "xlabel": "CPU Average (%)", "ylabel": "FPS Average"}, {"id": "fpsVsGpu", "title": "FPS Average vs GPU Average", "x": "GpuAverage", "y": "FpsAverage", "xlabel": "GPU Average (%)", "ylabel": "FPS Average"}, {"id": "cpuVsGpu", "title": "CPU Average vs GPU Average", "x": "CpuAverage", "y": "GpuAverage", "xlabel": "CPU Average (%)", "ylabel": "GPU Average (%)"}, {"id": "frameTimeStability", "title": "Frame Time Avg vs Frame Time Std Dev (stutter indicator)", "x": "FrameTimeAvg", "y": "FrameTimeStdDev", "xlabel": "Frame Time Avg (ms)", "ylabel": "Frame Time Std Dev (ms)"}, {"id": "stutterScores", "title": "Stutter Score: Frame Time vs Displayed Time", "x": "StutterScoreFT", "y": "StutterScoreDT", "xlabel": "Stutter Score (Frame Time)", "ylabel": "Stutter Score (Displayed Time)", "note": "Both are 0&ndash;100 <b>smoothness</b> scores (higher = better; 100 = no detected stutter). <b>Frame Time</b> measures rendering-pipeline consistency (how evenly the app submits frames); <b>Displayed Time</b> measures perceived visual smoothness (how evenly frames actually land on screen). A perfect 100 on Frame Time but much lower Displayed Time indicates downstream (vsync/compositor/driver) is causing visible hitches."}, {"id": "fpsVsGpuMem", "title": "FPS Average vs GPU Memory Average", "x": "GpuMemoryAverage", "y": "FpsAverage", "xlabel": "GPU Memory Average (units)", "ylabel": "FPS Average"}, {"id": "blame", "title": "Blame CPU% vs Blame GPU% (bottleneck attribution)", "x": "BlameCpuPct", "y": "BlameGpuPct", "xlabel": "Blame CPU %", "ylabel": "Blame GPU %", "note": "Based only on the worst (bottom) 1% of frames in the capture, split between CPU-side and GPU-side cause &mdash; the two always add up to 100%. High Blame GPU% means the GPU is the limiting factor on the capture's worst frames; high Blame CPU% points at the CPU/driver side instead."}, {"id": "fps1pctLow", "title": "FPS Average vs 1% Low FPS (consistency)", "x": "FpsAverage", "y": "Fps1PctLow", "xlabel": "FPS Average", "ylabel": "FPS 1% Low"}];
+const charts = {};
+let currentState = null;
+let chartData = {};
+let emuChart = null;
+
+const cssVar = name => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+const colors = {
+  accent: cssVar('--cp-accent'),
+  danger: cssVar('--cp-danger'),
+  warning: cssVar('--cp-warning'),
+  success: cssVar('--cp-success'),
+  link: cssVar('--cp-link'),
+  text: cssVar('--cp-text'),
+  muted: cssVar('--cp-text-muted'),
+  border: cssVar('--cp-border'),
+  chartPoint: cssVar('--cp-chart-point'),
+};
+
+function finite(value) {
+  return typeof value === 'number' && Number.isFinite(value);
+}
+
+function mean(rows, key) {
+  const values = rows.map(row => row[key]).filter(finite);
+  return values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : null;
+}
+
+function quantile(values, q) {
+  const sorted = values.filter(finite).sort((a, b) => a - b);
+  if (!sorted.length) return null;
+  const position = (sorted.length - 1) * q;
+  const lower = Math.floor(position);
+  const upper = Math.ceil(position);
+  if (lower === upper) return sorted[lower];
+  return sorted[lower] + (sorted[upper] - sorted[lower]) * (position - lower);
+}
+
+function percentileRanks(rows, key, direction) {
+  const valid = rows
+    .map((row, index) => ({ row, index, value: row[key] }))
+    .filter(item => finite(item.value))
+    .sort((a, b) => direction === 'high' ? a.value - b.value : b.value - a.value);
+  const ranks = new Map();
+  for (let i = 0; i < valid.length;) {
+    let end = i + 1;
+    while (end < valid.length && valid[end].value === valid[i].value) end += 1;
+    const averageRank = ((i + 1) + end) / 2;
+    for (let j = i; j < end; j += 1) {
+      ranks.set(valid[j].index, averageRank / valid.length * 100);
+    }
+    i = end;
+  }
+  return ranks;
+}
+
+function buildClientState(minRating, startDate, endDate) {
+  const filtered = rawRecords.filter(row =>
+    row.GameRating >= minRating &&
+    row.EntryDateDate >= startDate &&
+    row.EntryDateDate <= endDate
+  );
+
+  const stateChartData = Object.fromEntries(chartDefs.map(def => [
+    def.id,
+    filtered
+      .filter(row => finite(row[def.x]) && finite(row[def.y]))
+      .map(row => ({
+        x: row[def.x],
+        y: row[def.y],
+        label: row.Table,
+        rating: row.GameRating,
+      })),
+  ]));
+
+  const bounds = Object.fromEntries(anomalySpecs.map(([column]) => {
+    const values = filtered.map(row => row[column]).filter(finite);
+    const q1 = quantile(values, 0.25);
+    const q3 = quantile(values, 0.75);
+    const iqr = q1 == null || q3 == null ? null : q3 - q1;
+    return [column, iqr == null ? [null, null] : [q1 - 1.5 * iqr, q3 + 1.5 * iqr]];
+  }));
+
+  const anomalyRows = [];
+  filtered.forEach(row => {
+    const reasons = [];
+    anomalySpecs.forEach(([column, direction, description]) => {
+      const value = row[column];
+      const [low, high] = bounds[column];
+      if (!finite(value) || low == null || high == null) return;
+      if (direction === 'low' && value < low) {
+        reasons.push(`${column}=${value.toFixed(2)} (< normal floor ${low.toFixed(2)}) — ${description}`);
+      } else if (direction === 'high' && value > high) {
+        reasons.push(`${column}=${value.toFixed(2)} (> normal ceiling ${high.toFixed(2)}) — ${description}`);
+      }
+    });
+    if (reasons.length) {
+      anomalyRows.push({
+        Table: row.Table,
+        EntryDate: row.EntryDate,
+        FpsAverage: finite(row.FpsAverage) ? row.FpsAverage : null,
+        score: reasons.length,
+        reasons,
+      });
+    }
+  });
+  anomalyRows.sort((a, b) => b.score - a.score);
+  const rerunCandidates = anomalyRows.filter(row => row.score >= 2);
+  const watchList = anomalyRows.filter(row => row.score === 1);
+
+  const tableGroups = new Map();
+  filtered.forEach(row => {
+    if (!tableGroups.has(row.Table)) tableGroups.set(row.Table, []);
+    tableGroups.get(row.Table).push(row);
+  });
+  let rankedRows = Array.from(tableGroups, ([Table, rows]) => ({
+    Table,
+    CaptureCount: rows.length,
+    ...Object.fromEntries(performanceScoreWeights.map(([column]) => [column, mean(rows, column)])),
+  })).filter(row => finite(row.FpsAverage));
+
+  const metricRanks = Object.fromEntries(performanceScoreWeights.map(([column, direction]) => [
+    column, percentileRanks(rankedRows, column, direction),
+  ]));
+  rankedRows.forEach((row, index) => {
+    let total = 0;
+    let totalWeight = 0;
+    performanceScoreWeights.forEach(([column, , weight]) => {
+      const rank = metricRanks[column].get(index);
+      if (finite(rank)) {
+        total += weight * rank;
+        totalWeight += weight;
+      }
+    });
+    row.PerformanceScore = totalWeight ? total / totalWeight : null;
+  });
+  rankedRows = rankedRows
+    .filter(row => finite(row.PerformanceScore))
+    .sort((a, b) => b.PerformanceScore - a.PerformanceScore);
+
+  const emulatorGroups = new Map();
+  filtered.filter(row => finite(row.FpsAverage) && row.EmuDisplay != null).forEach(row => {
+    if (!emulatorGroups.has(row.EmuDisplay)) emulatorGroups.set(row.EmuDisplay, []);
+    emulatorGroups.get(row.EmuDisplay).push(row);
+  });
+  const emulatorRows = Array.from(emulatorGroups, ([label, rows]) => ({
+    label,
+    rows,
+    fps: mean(rows, 'FpsAverage'),
+    x: mean(rows, 'GpuAverage'),
+    y: mean(rows, 'CpuAverage'),
+    frameTimeStdDev: mean(rows, 'FrameTimeStdDev'),
+    animErrorRms: mean(rows, 'AnimationErrorRMS'),
+  })).filter(row => finite(row.x) && finite(row.y));
+  const stdValues = emulatorRows.map(row => row.frameTimeStdDev).filter(finite);
+  const minStd = stdValues.length ? Math.min(...stdValues) : null;
+  const maxStd = stdValues.length ? Math.max(...stdValues) : null;
+  const stdRange = minStd == null || maxStd == null ? 0 : maxStd - minStd;
+  const emuChartData = emulatorRows.map(row => ({
+    x: row.x,
+    y: row.y,
+    r: !finite(row.frameTimeStdDev) || stdRange === 0
+      ? 20
+      : 8 + 34 * ((row.frameTimeStdDev - minStd) / stdRange),
+    label: row.label,
+    count: row.rows.length,
+    fps: finite(row.fps) ? Number(row.fps.toFixed(1)) : null,
+    frameTimeStdDev: finite(row.frameTimeStdDev) ? Number(row.frameTimeStdDev.toFixed(2)) : null,
+    animErrorRms: finite(row.animErrorRms) ? Number(row.animErrorRms.toFixed(2)) : null,
+  }));
+
+  return {
+    summary: {
+      rows: filtered.length,
+      tables: new Set(filtered.map(row => row.Table)).size,
+      missingFps: filtered.filter(row => !finite(row.FpsAverage)).length,
+      reruns: rerunCandidates.length,
+    },
+    chartData: stateChartData,
+    emuChartData,
+    top10Best: rankedRows.slice(0, 10),
+    top10Worst: rankedRows.slice(-10).reverse(),
+    rerunCandidates,
+    watchList,
+    rerunTables: Array.from(new Set(rerunCandidates.map(row => row.Table))).sort(),
+    tables: Array.from(new Set(filtered.map(row => row.Table))).sort(),
+  };
+}
+
+currentState = buildClientState(0, '2026-03-25', '2026-10-11');
+chartData = currentState.chartData;
+
+function stutterGrade(score) {
+  if (score >= 90) return 'A - Excellent';
+  if (score >= 80) return 'B - Good';
+  if (score >= 70) return 'C - Fair';
+  if (score >= 60) return 'D - Poor';
+  return 'F - Severe';
+}
+
+function makeChart(def) {
+  const ctx = document.getElementById(def.id).getContext('2d');
+  const pts = chartData[def.id];
+  const isStutterChart = def.id === 'stutterScores';
+  const chart = new Chart(ctx, {
+    type: 'scatter',
+    data: {
+      datasets: [{
+        label: def.title,
+        data: pts,
+        backgroundColor: colors.chartPoint,
+        borderColor: colors.chartPoint,
+        pointRadius: 4,
+        pointHoverRadius: 6,
+      }]
+    },
+    options: {
+      responsive: true,
+      plugins: {
+        legend: { display: false },
+        zoom: {
+          limits: {
+            x: { min: 'original', max: 'original' },
+            y: { min: 'original', max: 'original' },
+          },
+          pan: { enabled: true, mode: 'xy' },
+          zoom: {
+            wheel: { enabled: true, speed: 0.1 },
+            pinch: { enabled: true },
+            mode: 'xy',
+          }
+        },
+        tooltip: {
+          callbacks: {
+            label: (item) => isStutterChart
+              ? [
+                  `${item.raw.label}`,
+                  `Game rating: ${item.raw.rating}`,
+                  `Frame Time: ${item.raw.x.toFixed(1)} (${stutterGrade(item.raw.x)})`,
+                  `Displayed Time: ${item.raw.y.toFixed(1)} (${stutterGrade(item.raw.y)}) -- recommended`,
+                ]
+              : [
+                  `${item.raw.label} (rating ${item.raw.rating})`,
+                  `(${item.raw.x.toFixed(2)}, ${item.raw.y.toFixed(2)})`,
+                ]
+          }
+        }
+      },
+      scales: {
+        x: { title: { display: true, text: def.xlabel, color: colors.muted }, grid: { color: colors.border }, ticks: { color: colors.muted } },
+        y: { title: { display: true, text: def.ylabel, color: colors.muted }, grid: { color: colors.border }, ticks: { color: colors.muted } }
+      }
+    }
+  });
+  charts[def.id] = chart;
+}
+
+chartDefs.forEach(makeChart);
+
+const emuCanvas = document.getElementById('emuChart');
+function renderEmuChart(emuChartData) {
+  if (!emuCanvas) return;
+  if (emuChart) emuChart.destroy();
+  document.getElementById('emuEmpty').textContent =
+    emuChartData.length ? '' : 'No emulator data is available for this rating threshold.';
+  if (!emuChartData.length) return;
+  const emuColors = [
+    colors.chartPoint, colors.warning, colors.danger, colors.link,
+    colors.success, colors.muted
+  ];
+  emuChart = new Chart(emuCanvas.getContext('2d'), {
+    type: 'bubble',
+    data: {
+      datasets: emuChartData.map((p, i) => ({
+        label: p.label,
+        data: [p],
+        backgroundColor: emuColors[i % emuColors.length],
+        borderColor: emuColors[i % emuColors.length].replace('0.7', '1'),
+      }))
+    },
+    options: {
+      responsive: true,
+      plugins: {
+        legend: { position: 'right', labels: { color: colors.text, boxWidth: 12, font: { size: 11 } } },
+        zoom: {
+          limits: {
+            x: { min: 'original', max: 'original' },
+            y: { min: 'original', max: 'original' },
+          },
+          pan: { enabled: true, mode: 'xy' },
+          zoom: {
+            wheel: { enabled: true, speed: 0.1 },
+            pinch: { enabled: true },
+            mode: 'xy',
+          }
+        },
+        tooltip: {
+          callbacks: {
+            label: (item) => {
+              const p = item.raw;
+              return [
+                `${p.label} (${p.count} capture${p.count === 1 ? '' : 's'})`,
+                `Avg CPU%: ${p.y.toFixed(1)}  Avg GPU%: ${p.x.toFixed(1)}  Avg FPS: ${p.fps ?? 'n/a'}`,
+                `Frame time std dev (bubble size): ${p.frameTimeStdDev ?? 'n/a'}  Animation error RMS: ${p.animErrorRms ?? 'n/a'}`,
+              ];
+            }
+          }
+        }
+      },
+      scales: {
+        x: { title: { display: true, text: 'Average GPU Utilization (%)', color: colors.muted }, grid: { color: colors.border }, ticks: { color: colors.muted } },
+        y: { title: { display: true, text: 'Average CPU Utilization (%)', color: colors.muted }, grid: { color: colors.border }, ticks: { color: colors.muted } }
+      }
+    }
+  });
+}
+
+const searchBox = document.getElementById('searchBox');
+const tableFilter = document.getElementById('tableFilter');
+const ratingFilter = document.getElementById('ratingFilter');
+const startDate = document.getElementById('startDate');
+const endDate = document.getElementById('endDate');
+const resetDates = document.getElementById('resetDates');
+const dateFilterError = document.getElementById('dateFilterError');
+
+function escapeHtml(value) {
+  const node = document.createElement('div');
+  node.textContent = String(value);
+  return node.innerHTML;
+}
+
+function renderPerfList(targetId, rows) {
+  const target = document.getElementById(targetId);
+  if (!rows.length) {
+    target.innerHTML = '<p class="muted">Not enough data to rank.</p>';
+    return;
+  }
+  const rerunTables = new Set(currentState.rerunTables);
+  target.innerHTML = `<ol class="perf-list">${rows.map((row, index) => `
+    <li><span class="rank">${index + 1}.</span>
+    <span class="perf-table">${escapeHtml(row.Table)}</span>
+    ${rerunTables.has(row.Table) ? '<span class="score-badge" title="Also flagged as a recommended re-run">&#9888;</span>' : ''}
+    <br><span class="muted">score ${row.PerformanceScore.toFixed(1)}/100
+    &middot; FPS avg ${row.FpsAverage.toFixed(1)}
+    &middot; ${row.CaptureCount} capture(s)</span></li>`).join('')}</ol>`;
+}
+
+function renderAnomalyTable(targetId, rows, emptyMessage) {
+  const target = document.getElementById(targetId);
+  if (!rows.length) {
+    target.innerHTML = `<p class="muted">${emptyMessage}</p>`;
+    return;
+  }
+  target.innerHTML = `<table class="anomaly-table">
+    <thead><tr><th>Table</th><th>Entry Date</th><th>FPS Avg</th><th>Flags</th><th>Reason(s)</th></tr></thead>
+    <tbody>${rows.map(row => `<tr>
+      <td>${escapeHtml(row.Table)}</td>
+      <td>${escapeHtml(row.EntryDate)}</td>
+      <td>${row.FpsAverage == null ? 'n/a' : row.FpsAverage.toFixed(1)}</td>
+      <td>${row.score}</td>
+      <td>${row.reasons.map(escapeHtml).join('<br>')}</td>
+    </tr>`).join('')}</tbody>
+  </table>`;
+}
+
+function updateTableOptions() {
+  const selected = tableFilter.value;
+  tableFilter.innerHTML = '<option value="">All tables (no filter)</option>' +
+    currentState.tables.map(table =>
+      `<option value="${escapeHtml(table)}">${escapeHtml(table)}</option>`
+    ).join('');
+  if (currentState.tables.includes(selected)) tableFilter.value = selected;
+}
+
+function renderState() {
+  const summary = currentState.summary;
+  document.getElementById('summaryRows').textContent = summary.rows;
+  document.getElementById('summaryTables').textContent = summary.tables;
+  document.getElementById('summaryMissingFps').textContent = summary.missingFps;
+  document.getElementById('summaryReruns').textContent = summary.reruns;
+  renderEmuChart(currentState.emuChartData);
+  renderPerfList('top10Best', currentState.top10Best);
+  renderPerfList('top10Worst', currentState.top10Worst);
+  renderAnomalyTable(
+    'rerunCandidates',
+    currentState.rerunCandidates,
+    'No rows crossed the multi-metric re-run threshold for this rating selection.'
+  );
+  renderAnomalyTable(
+    'watchList',
+    currentState.watchList,
+    'No single-metric outliers for this rating selection.'
+  );
+}
+
+function applyView() {
+  const selected = tableFilter.value; // exact table name, or '' for all
+  const q = searchBox.value.trim().toLowerCase();
+
+  chartDefs.forEach(def => {
+    const chart = charts[def.id];
+    const allPts = chartData[def.id];
+
+    if (selected) {
+      // Dropdown filter: show only the selected table's points.
+      chart.data.datasets[0].data = allPts.filter(p => p.label === selected);
+      chart.data.datasets[0].pointBackgroundColor = colors.warning;
+      chart.data.datasets[0].pointRadius = 6;
+    } else {
+      // No dropdown filter: show all points, optionally highlighting a text search match.
+      chart.data.datasets[0].data = allPts;
+      chart.data.datasets[0].pointBackgroundColor = allPts.map(p =>
+        q && p.label.toLowerCase().includes(q) ? colors.danger : colors.chartPoint);
+      chart.data.datasets[0].pointRadius = allPts.map(p =>
+        q && p.label.toLowerCase().includes(q) ? 7 : 4);
+    }
+    chart.update();
+  });
+}
+
+tableFilter.addEventListener('change', () => {
+  if (tableFilter.value) searchBox.value = '';
+  applyView();
+});
+
+searchBox.addEventListener('input', () => {
+  if (searchBox.value.trim()) tableFilter.value = '';
+  applyView();
+});
+
+function applyReportFilters() {
+  if (startDate.value > endDate.value) {
+    const message = 'Beginning date must be on or before the ending date.';
+    dateFilterError.textContent = message;
+    startDate.setCustomValidity(message);
+    endDate.setCustomValidity(message);
+    return;
+  }
+  dateFilterError.textContent = '';
+  startDate.setCustomValidity('');
+  endDate.setCustomValidity('');
+  currentState = buildClientState(
+    Number(ratingFilter.value),
+    startDate.value,
+    endDate.value
+  );
+  chartData = currentState.chartData;
+  updateTableOptions();
+  renderState();
+  applyView();
+}
+
+ratingFilter.addEventListener('change', applyReportFilters);
+startDate.addEventListener('change', applyReportFilters);
+endDate.addEventListener('change', applyReportFilters);
+resetDates.addEventListener('click', () => {
+  startDate.value = '2026-03-25';
+  endDate.value = '2026-10-11';
+  applyReportFilters();
+});
+
+function chartForId(id) {
+  return Chart.getChart(document.getElementById(id));
+}
+
+function closeExpandedChart() {
+  const expanded = document.querySelector('.card.expanded');
+  if (!expanded) return;
+  expanded.classList.remove('expanded');
+  document.body.classList.remove('chart-expanded');
+  const button = expanded.querySelector('.toggle-expand');
+  button.textContent = 'Expand';
+  chartForId(button.dataset.chart)?.resize();
+}
+
+document.querySelectorAll('.reset-zoom').forEach(button => {
+  button.addEventListener('click', () => chartForId(button.dataset.chart)?.resetZoom());
+});
+
+document.querySelectorAll('.toggle-expand').forEach(button => {
+  button.addEventListener('click', () => {
+    const card = button.closest('.card');
+    if (card.classList.contains('expanded')) {
+      closeExpandedChart();
+      return;
+    }
+    closeExpandedChart();
+    card.classList.add('expanded');
+    document.body.classList.add('chart-expanded');
+    button.textContent = 'Close';
+    requestAnimationFrame(() => chartForId(button.dataset.chart)?.resize());
+  });
+});
+
+document.addEventListener('keydown', event => {
+  if (event.key === 'Escape') closeExpandedChart();
+});
+
+applyReportFilters();
+</script>
+</body>
+</html>

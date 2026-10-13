@@ -45,6 +45,23 @@ VPinPerfMon.exe --gameid 1523 --outputsql --sqlitedbpath "C:\vPinball\PinUPSyste
 
 Run `--createsql` once to create the table and indexes. See the full readme for schema details.
 
+## Reporting
+
+The [`Reporting`](Reporting) folder contains a two-step Python pipeline for turning PinUP Popper performance history into an interactive HTML report. `extract_perf_stats.py` exports `CustomPerfStats` with game names, ratings, and emulator names from the database; `generate_scatter_report.py` builds scatter charts, emulator comparisons, best/worst table rankings, and anomaly detection with recommended re-runs. You can filter by rating, capture date, and table, search for tables, and zoom or expand charts.
+
+Requires Python 3 and `pandas` (separate from the .NET application). From the repository root:
+
+```powershell
+cd .\Reporting
+python -m pip install pandas
+python extract_perf_stats.py "C:\vPinball\PinUPSystem\PUPDatabase.db"
+python generate_scatter_report.py
+```
+
+Open the generated `PerfStats_ScatterReport_<timestamp>.html` in your browser. Outputs are written to the current directory; without an explicit CSV path, the generator selects the last `CustomPerfStats_*.csv` filename in sorted order (the latest timestamp for standard filenames). Charts require internet access to load JavaScript libraries from a CDN.
+
+See the [reporting guide](Reporting/PERF_STATS_REPORT_PROCESS.md) for usage and methodology. Download or open the included [demo report](Reporting/PerfStats_ScatterReport_Demo.html) locally to explore a sample without a database. Local databases, CSV exports, and generated reports are excluded from version control; only the demo HTML is included.
+
 ## Building
 
 ```
