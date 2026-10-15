@@ -73,7 +73,16 @@ if HAS_EMULATOR:
     cols.append("EmuDisplay")
 if HAS_GAME_RATING:
     cols.append("GameRating")
+HAS_GAME_ID = "GameID" in df.columns
+HAS_VR = "IsVR" in df.columns
+if HAS_GAME_ID:
+    cols.append("GameID")
+if HAS_VR:
+    cols.append("IsVR")
 data = df[cols].copy()
+
+if HAS_VR:
+    data["IsVR"] = pd.to_numeric(data["IsVR"], errors="coerce").fillna(0).astype(int).clip(0, 1)
 
 if HAS_GAME_RATING:
     data["GameRating"] = pd.to_numeric(data["GameRating"], errors="coerce").fillna(0)
@@ -102,6 +111,7 @@ if entry_dates.isna().any():
     bad_count = int(entry_dates.isna().sum())
     sys.exit(f"EntryDate contains {bad_count} value(s) that could not be parsed.")
 data["EntryDateDate"] = entry_dates.dt.strftime("%Y-%m-%d")
+data["EntryDateTime"] = entry_dates.dt.strftime("%Y-%m-%d %H:%M:%S")
 MIN_ENTRY_DATE = data["EntryDateDate"].min()
 MAX_ENTRY_DATE = data["EntryDateDate"].max()
 
@@ -182,7 +192,7 @@ data["ConsistencyRatio"] = data["Fps1PctLow"] / data["FpsAverage"]
 def records_for_frame(frame):
     frame_records = []
     record_cols = list(cols) + [
-        "Table", "SpreadRatio", "ConsistencyRatio", "GameRating", "EntryDateDate"
+        "Table", "SpreadRatio", "ConsistencyRatio", "GameRating", "EntryDateDate", "EntryDateTime"
     ]
     for _, row in frame.iterrows():
         rec = {}
@@ -497,7 +507,7 @@ html = f"""<!DOCTYPE html>
   }}
   .filter-row ~ .filter-row {{ margin-top: 10px; }}
   .filter-bar label {{ color: var(--cp-text-muted); font-size: 13px; }}
-  #searchBox, #tableFilter, #ratingFilter, #startDate, #endDate {{
+  #searchBox, #tableFilter, #ratingFilter, #vrFilter, #startDate, #endDate {{
     padding: 8px 12px; border-radius: 0.625rem; border: 1px solid var(--cp-border);
     background: var(--cp-surface); color: var(--cp-text); font-size: 13px;
   }}
@@ -555,6 +565,7 @@ html = f"""<!DOCTYPE html>
     <label for="endDate">Through</label>
     <input id="endDate" type="date" min="{MIN_ENTRY_DATE}" max="{MAX_ENTRY_DATE}" value="{MAX_ENTRY_DATE}">
     <button id="resetDates" type="button">All dates</button>
+    <label><input id="latestOnly" type="checkbox" checked> Latest run per table only</label>
   </div>
   <span id="dateFilterError" role="alert"></span>
   <div class="filter-row">
@@ -565,6 +576,11 @@ html = f"""<!DOCTYPE html>
       <option value="3">3 or higher</option>
       <option value="4">4 or higher</option>
       <option value="5">5 only</option>
+    </select>
+    <select id="vrFilter" {"disabled" if not HAS_VR else ""}>
+      <option value="all">Desktop + VR</option>
+      <option value="desktop">Desktop only</option>
+      <option value="vr">VR only</option>
     </select>
     <select id="tableFilter">
       <option value="">All tables (no filter)</option>
@@ -698,12 +714,24 @@ function percentileRanks(rows, key, direction) {{
   return ranks;
 }}
 
-function buildClientState(minRating, startDate, endDate) {{
-  const filtered = rawRecords.filter(row =>
+function keepLatestRuns(rows) {{
+  const latest = new Map();
+  for (const row of rows) {{
+    const key = row.GameID ?? row.Table;
+    const prev = latest.get(key);
+    if (!prev || row.EntryDateTime > prev.EntryDateTime) latest.set(key, row);
+  }}
+  return rows.filter(row => latest.get(row.GameID ?? row.Table) === row);
+}}
+
+function buildClientState(minRating, startDate, endDate, vrMode, latestOnly) {{
+  let filtered = rawRecords.filter(row =>
     row.GameRating >= minRating &&
     row.EntryDateDate >= startDate &&
-    row.EntryDateDate <= endDate
+    row.EntryDateDate <= endDate &&
+    (vrMode === 'all' || (vrMode === 'vr') === (row.IsVR === 1))
   );
+  if (latestOnly) filtered = keepLatestRuns(filtered);
 
   const stateChartData = Object.fromEntries(chartDefs.map(def => [
     def.id,
@@ -962,6 +990,8 @@ function renderEmuChart(emuChartData) {{
 const searchBox = document.getElementById('searchBox');
 const tableFilter = document.getElementById('tableFilter');
 const ratingFilter = document.getElementById('ratingFilter');
+const vrFilter = document.getElementById('vrFilter');
+const latestOnlyCheckbox = document.getElementById('latestOnly');
 const startDate = document.getElementById('startDate');
 const endDate = document.getElementById('endDate');
 const resetDates = document.getElementById('resetDates');
@@ -1086,7 +1116,9 @@ function applyReportFilters() {{
   currentState = buildClientState(
     Number(ratingFilter.value),
     startDate.value,
-    endDate.value
+    endDate.value,
+    vrFilter.value,
+    latestOnlyCheckbox.checked
   );
   chartData = currentState.chartData;
   updateTableOptions();
@@ -1095,6 +1127,8 @@ function applyReportFilters() {{
 }}
 
 ratingFilter.addEventListener('change', applyReportFilters);
+vrFilter.addEventListener('change', applyReportFilters);
+latestOnlyCheckbox.addEventListener('change', applyReportFilters);
 startDate.addEventListener('change', applyReportFilters);
 endDate.addEventListener('change', applyReportFilters);
 resetDates.addEventListener('click', () => {{
