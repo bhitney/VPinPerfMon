@@ -13,7 +13,7 @@ using Microsoft.Data.Sqlite;
 
 namespace VPinPerfMon;
 
-internal class Program
+internal partial class Program
 {
     // --- NVML / GPU Setup ---
     private const string NvmlDll = "nvml.dll";
@@ -107,6 +107,16 @@ internal class Program
         // Stutter Scores (0-100)
         public float? StutterScoreFT { get; set; }  // Based on FrameTime Delta
         public float? StutterScoreDT { get; set; }  // Based on DisplayedTime Delta
+        public StutterGradeResult? StutterGrade { get; set; }
+        public GapDiagnostics? GapInfo { get; set; }
+
+        // Capture context and file pointers (stored in the database)
+        public string? SwapChainAddress { get; set; }
+        public int SwapChainCount { get; set; }
+        public string? PresentApplication { get; set; }
+        public string? PresentMode { get; set; }
+        public string? FileAnalysisPath { get; set; }
+        public string? FileRawDataPath { get; set; }
 
         // Monitor Refresh Rate (optional manual override)
         public float? Hz { get; set; }
@@ -374,146 +384,82 @@ internal class Program
                 Console.WriteLine($"Target Frame Time: {targetFrameTime:F2}ms");
                 Console.WriteLine();
 
-                // Helper function for scoring
-                float ScoreComponent(float percentage) => percentage switch
-                {
-                    < 10 => 100,
-                    < 20 => 100 - ((percentage - 10) * 2),
-                    < 40 => 80 - ((percentage - 20) * 1),
-                    < 60 => 60 - ((percentage - 40) * 2),
-                    _ => Math.Max(0, 20 - ((percentage - 60)))
-                };
+				// Missed-refresh grade (DisplayedTime) - this is the headline grade
+				if (StutterGrade != null)
+				{
+					var g = StutterGrade;
+					var c = g.Config;
+					Console.WriteLine("--- DisplayedTime Missed-Refresh Analysis (Perceived Smoothness) - GRADE ---");
+					if (!g.Graded)
+					{
+						Console.WriteLine($"  {g.Note}");
+						Console.WriteLine();
+					}
+					else
+					{
+						Console.WriteLine($"  Frames analyzed:     {g.Frames} ({g.MissingFrames} without DisplayedTime), {g.DurationSeconds:F1}s");
+						if (g.TrimmedFrames > 0)
+							Console.WriteLine($"  Tail excluded:       last {g.TrimmedSeconds:F1}s ({g.TrimmedFrames} frames) dropped in case the game exited before the trace finished");
+						Console.WriteLine($"  Refresh interval:    {g.RefreshMs:F2}ms ({1000.0 / g.RefreshMs:F1} Hz, {refreshSource})");
+						Console.WriteLine($"  Doubled (>= {c.DoubledRefreshes:F1}):   {g.Doubled}");
+						Console.WriteLine($"  3+ refresh (>= {c.TripleRefreshes:F1}): {g.Triple}   (longest {g.LongestRefreshes} refreshes)");
+						Console.WriteLine($"  Missed frames:       {g.DoubledPct:F3}% of frames, {g.MissesPerMinute:F1} per minute");
+						Console.WriteLine($"  Weighted miss rate:  {g.WeightedMissPct:F3}% (3+ refresh frames weighted x{c.TripleWeight:F1} per extra refresh)");
+						Console.WriteLine($"  Clustering:          peak {g.PeakWindowMisses} misses in a {c.ClusterWindowSeconds:F0}s window, {g.ClusterRatio:F1}x the average window, penalty x{g.ClusterMultiplier:F2}{(g.ClusterMultiplier <= 1.0 ? $" (needs >= {c.ClusterMinPeak} in one window)" : string.Empty)}");
+						Console.WriteLine($"  Effective miss rate: {g.EffectivePct:F3}%");
+						Console.WriteLine($"  Bands (A/B/C/D):     < {c.BandsPct[0]:G}% / < {c.BandsPct[1]:G}% / < {c.BandsPct[2]:G}% / < {c.BandsPct[3]:G}% (F above)");
+						if (g.CappedByTriple)
+							Console.WriteLine($"  Cap:                 {g.Triple} frames of 3+ refreshes, grade limited to {"ABCDF"[c.TripleCapGradeIndex]}");
+													else if (g.Triple > 0)
+														Console.WriteLine($"  Cap:                 not applied ({g.Triple} 3+ refresh frame; needs >= {c.TripleCapMinCount})");
+						Console.WriteLine();
+						string gradeText = g.Grade switch
+						{
+							"A" => "A (Excellent)",
+							"B" => "B (Good)",
+							"C" => "C (Fair)",
+							"D" => "D (Poor)",
+							_ => "F (Unplayable)"
+						};
+						Console.WriteLine($"STUTTER GRADE (DisplayedTime): {g.Score:F1}/100 (Grade: {gradeText}) - RECOMMENDED");
+						Console.WriteLine("  - Based on frames displayed for more than one refresh");
+						Console.WriteLine();
+					}
+				}
 
-                // Show FrameTime-based Stutter Score breakdown
-                if (StutterScoreFT.HasValue && FrameTimeDeltaReadings.Count > 0 && FrameTimeReadings.Count > 0)
-                {
-                    Console.WriteLine("--- FrameTime-Based Analysis (Rendering Consistency) ---");
+				// FrameTime score is a diagnostic only
+				if (StutterScoreFT.HasValue)
+				{
+					Console.WriteLine($"Diagnostic only - FrameTime score: {StutterScoreFT.Value:F1}/100 (rendering pipeline consistency, not graded)");
+					Console.WriteLine("  - Present() timing can be scattered by frame pacing without any visible effect.");
+					Console.WriteLine();
+				}
 
-                    float avgDelta = FrameTimeDeltaReadings.Average();
-                    float delta995th = FrameTimeDelta995thReadings.Count > 0 
-                        ? FrameTimeDelta995thReadings.Average() 
-                        : FrameTimeDeltaReadings.Max();
+				if (GapInfo != null)
+				{
+					Console.WriteLine($"Present gaps >= {GapInfo.LongGapMs:F2}ms: {GapInfo.LongGaps} ({GapInfo.LongGapPct:F1}% of frames)");
+					if (GapInfo.LongGaps > 0)
+					{
+						Console.WriteLine($"  Mean DisplayedTime of the frame after a long gap: {GapInfo.MeanDisplayedAfterLongGap:F2}ms");
+						Console.WriteLine($"  Long gaps followed by a missed refresh: {GapInfo.LongGapsFollowedByMiss}");
+					}
+					Console.WriteLine();
+				}
 
-                    double frameTimeMean = FrameTimeReadings.Average();
-                    double frameTimeVariance = FrameTimeReadings.Average(ft => Math.Pow(ft - frameTimeMean, 2));
-                    float stdDev = (float)Math.Sqrt(frameTimeVariance);
+				if (AnimationErrorMAD.HasValue && AnimationErrorRMS.HasValue)
+				{
+					Console.WriteLine($"Animation error (informational, not graded): RMS {AnimationErrorRMS.Value:F3}ms, MAD {AnimationErrorMAD.Value:F3}ms");
+					Console.WriteLine("  - Not validated for renderers that simulate to a predicted display time.");
+					Console.WriteLine();
+				}
 
-                    float avgDeltaPct = (avgDelta / targetFrameTime) * 100;
-                    float delta995thPct = (delta995th / targetFrameTime) * 100;
-                    float stdDevPct = (stdDev / targetFrameTime) * 100;
-
-                    float avgScore = ScoreComponent(avgDeltaPct);
-                    float delta995Score = ScoreComponent(delta995thPct);
-                    float stdDevScore = ScoreComponent(stdDevPct);
-
-                    Console.WriteLine("Component Breakdown:");
-                    Console.WriteLine($"  99.5 %ile Delta:   {delta995th:F2}ms ({delta995thPct:F1}% of target) = {delta995Score:F1} pts × 50% = {delta995Score * 0.50f:F1}");
-                    Console.WriteLine($"  Average Delta:     {avgDelta:F2}ms ({avgDeltaPct:F1}% of target) = {avgScore:F1} pts × 25% = {avgScore * 0.25f:F1}");
-                    Console.WriteLine($"  Std Deviation:     {stdDev:F2}ms ({stdDevPct:F1}% of target) = {stdDevScore:F1} pts × 10% = {stdDevScore * 0.10f:F1}");
-
-                    if (AnimationErrorRMS.HasValue && AnimationErrorMAD.HasValue)
-                    {
-                        float rmsPct = (AnimationErrorRMS.Value / targetFrameTime) * 100;
-                        float madPct = (AnimationErrorMAD.Value / targetFrameTime) * 100;
-                        float rmsScore = ScoreComponent(rmsPct);
-                        float madScore = ScoreComponent(madPct);
-                        Console.WriteLine($"  AnimError RMS:     {AnimationErrorRMS.Value:F3}ms ({rmsPct:F1}% of target) = {rmsScore:F1} pts × 10% = {rmsScore * 0.10f:F1}");
-                        Console.WriteLine($"  AnimError MAD:     {AnimationErrorMAD.Value:F3}ms ({madPct:F1}% of target) = {madScore:F1} pts ×  5% = {madScore * 0.05f:F1}");
-                    }
-                    else
-                    {
-                        Console.WriteLine("  AnimError RMS:     N/A (redistributed to 99.5 %ile)");
-                        Console.WriteLine("  AnimError MAD:     N/A (redistributed to 99.5 %ile)");
-                    }
-
-                    Console.WriteLine();
-                }
-
-                // Show DisplayedTime-based Stutter Score breakdown
-                if (StutterScoreDT.HasValue && DisplayedTimeDeltaReadings.Count > 0 && DisplayedTimeReadings.Count > 0)
-                {
-                    Console.WriteLine("--- DisplayedTime-Based Analysis (Perceived Smoothness) - RECOMMENDED ---");
-
-                    float avgDelta = DisplayedTimeDeltaReadings.Average();
-                    float delta995th = DisplayedTimeDelta995thReadings.Count > 0 
-                        ? DisplayedTimeDelta995thReadings.Average() 
-                        : DisplayedTimeDeltaReadings.Max();
-
-                    double displayedTimeMean = DisplayedTimeReadings.Average();
-                    double displayedTimeVariance = DisplayedTimeReadings.Average(dt => Math.Pow(dt - displayedTimeMean, 2));
-                    float stdDev = (float)Math.Sqrt(displayedTimeVariance);
-
-                    float avgDeltaPct = (avgDelta / targetFrameTime) * 100;
-                    float delta995thPct = (delta995th / targetFrameTime) * 100;
-                    float stdDevPct = (stdDev / targetFrameTime) * 100;
-
-                    float avgScore = ScoreComponent(avgDeltaPct);
-                    float delta995Score = ScoreComponent(delta995thPct);
-                    float stdDevScore = ScoreComponent(stdDevPct);
-
-                    Console.WriteLine("Component Breakdown:");
-                    Console.WriteLine($"  99.5 %ile Delta:   {delta995th:F2}ms ({delta995thPct:F1}% of target) = {delta995Score:F1} pts × 50% = {delta995Score * 0.50f:F1}");
-                    Console.WriteLine($"  Average Delta:     {avgDelta:F2}ms ({avgDeltaPct:F1}% of target) = {avgScore:F1} pts × 25% = {avgScore * 0.25f:F1}");
-                    Console.WriteLine($"  Std Deviation:     {stdDev:F2}ms ({stdDevPct:F1}% of target) = {stdDevScore:F1} pts × 10% = {stdDevScore * 0.10f:F1}");
-
-                    if (AnimationErrorRMS.HasValue && AnimationErrorMAD.HasValue)
-                    {
-                        float rmsPct = (AnimationErrorRMS.Value / targetFrameTime) * 100;
-                        float madPct = (AnimationErrorMAD.Value / targetFrameTime) * 100;
-                        float rmsScore = ScoreComponent(rmsPct);
-                        float madScore = ScoreComponent(madPct);
-                        Console.WriteLine($"  AnimError RMS:     {AnimationErrorRMS.Value:F3}ms ({rmsPct:F1}% of target) = {rmsScore:F1} pts × 10% = {rmsScore * 0.10f:F1}");
-                        Console.WriteLine($"  AnimError MAD:     {AnimationErrorMAD.Value:F3}ms ({madPct:F1}% of target) = {madScore:F1} pts ×  5% = {madScore * 0.05f:F1}");
-                    }
-                    else
-                    {
-                        Console.WriteLine("  AnimError RMS:     N/A (redistributed to 99.5 %ile)");
-                        Console.WriteLine("  AnimError MAD:     N/A (redistributed to 99.5 %ile)");
-                    }
-
-                    Console.WriteLine();
-                }
-
-                // Display both stutter scores
-                if (StutterScoreFT.HasValue)
-                {
-                    string gradeFT = StutterScoreFT.Value switch
-                    {
-                        >= 90 => "A (Excellent)",
-                        >= 80 => "B (Good)",
-                        >= 70 => "C (Fair)",
-                        >= 60 => "D (Poor)",
-                        _ => "F (Severe Stutter)"
-                    };
-                    Console.WriteLine($"STUTTER SCORE (FrameTime):     {StutterScoreFT.Value:F1}/100 (Grade: {gradeFT})");
-                    Console.WriteLine("  - Measures rendering pipeline consistency");
-                    Console.WriteLine();
-                }
-
-                if (StutterScoreDT.HasValue)
-                {
-                    string gradeDT = StutterScoreDT.Value switch
-                    {
-                        >= 90 => "A (Excellent)",
-                        >= 80 => "B (Good)",
-                        >= 70 => "C (Fair)",
-                        >= 60 => "D (Poor)",
-                        _ => "F (Severe Stutter)"
-                    };
-                    Console.WriteLine($"STUTTER SCORE (DisplayedTime): {StutterScoreDT.Value:F1}/100 (Grade: {gradeDT}) - RECOMMENDED");
-                    Console.WriteLine("  - Measures perceived visual smoothness");
-                    Console.WriteLine();
-                }
-
-                Console.WriteLine("Interpretation:");
-                Console.WriteLine("  90-100 (A): Excellent - No perceptible stutter");
-                Console.WriteLine("  80-89  (B): Good - Minor occasional hitches");
-                Console.WriteLine("  70-79  (C): Fair - Noticeable inconsistency");
-                Console.WriteLine("  60-69  (D): Poor - Frequent stutters");
-                Console.WriteLine("  0-59   (F): Severe - Gameplay significantly impacted");
-                Console.WriteLine();
-                Console.WriteLine("Note: DisplayedTime score is more representative of user experience.");
-                Console.WriteLine("      FrameTime score is useful for diagnosing rendering pipeline issues.");
+				Console.WriteLine("Interpretation (A-F is the share of frames displayed for 2+ refreshes):");
+				Console.WriteLine("  A: Excellent - virtually no missed refreshes");
+				Console.WriteLine("  B: Good - rare missed refreshes");
+				Console.WriteLine("  C: Fair - noticeable misses");
+				Console.WriteLine("  D: Poor - frequent misses");
+				Console.WriteLine("  F: Unplayable");
+				Console.WriteLine("  Two or more 3+ refresh frames cap the grade at C.");
                 Console.WriteLine();
 
                 if (!ProcessFiltered)
@@ -526,7 +472,70 @@ internal class Program
             }
         }
 
-        public void InsertToDatabase(int gameId, int isVR, string databasePath, string? consoleOutput = null)
+        /// <summary>Binds the stutter grade, grading config, gap, capture context and file pointer parameters.</summary>
+        public void AddGradeParameters(SqliteCommand command)
+        {
+            var sg = StutterGrade;
+            bool graded = sg is { Graded: true };
+            var cfg = sg?.Config;
+            var gap = GapInfo;
+            void Param(string name, object? value) => command.Parameters.AddWithValue(name, value ?? DBNull.Value);
+
+            Param("@StutterGrade", graded ? sg!.Grade : null);
+            Param("@StutterGradeScore", graded ? sg!.Score : null);
+            Param("@StutterGradeCapped", graded ? (sg!.CappedByTriple ? 1 : 0) : null);
+            Param("@StutterGradeNote", sg != null && !string.IsNullOrEmpty(sg.Note) ? sg.Note : null);
+            Param("@StutterGradeVersion", sg != null ? 2 : null);
+            Param("@GradeFrames", sg?.Frames);
+            Param("@GradeMissingFrames", sg?.MissingFrames);
+            Param("@GradeDurationSec", graded ? sg!.DurationSeconds : null);
+            Param("@GradeRefreshMs", graded ? sg!.RefreshMs : null);
+            Param("@GradeRefreshSource", graded ? (Hz.HasValue ? "manual" : "auto") : null);
+            Param("@DoubledFrames", graded ? sg!.Doubled : null);
+            Param("@TripleFrames", graded ? sg!.Triple : null);
+            Param("@LongestMissRefreshes", graded ? sg!.LongestRefreshes : null);
+            Param("@MissedFramePct", graded ? sg!.DoubledPct : null);
+            Param("@MissesPerMinute", graded ? sg!.MissesPerMinute : null);
+            Param("@WeightedMissPct", graded ? sg!.WeightedMissPct : null);
+            Param("@ClusterPeakMisses", graded ? sg!.PeakWindowMisses : null);
+            Param("@ClusterRatio", graded ? sg!.ClusterRatio : null);
+            Param("@ClusterMultiplier", graded ? sg!.ClusterMultiplier : null);
+            Param("@EffectiveMissPct", graded ? sg!.EffectivePct : null);
+
+            Param("@CfgDoubledRefreshes", cfg?.DoubledRefreshes);
+            Param("@CfgTripleRefreshes", cfg?.TripleRefreshes);
+            Param("@CfgBandA", cfg?.BandsPct[0]);
+            Param("@CfgBandB", cfg?.BandsPct[1]);
+            Param("@CfgBandC", cfg?.BandsPct[2]);
+            Param("@CfgBandD", cfg?.BandsPct[3]);
+            Param("@CfgZeroScorePct", cfg?.ZeroScorePct);
+            Param("@CfgTripleWeight", cfg?.TripleWeight);
+            Param("@CfgTripleCapGrade", cfg != null ? "ABCDF"[cfg.TripleCapGradeIndex].ToString() : null);
+            Param("@CfgClusterWindowSec", cfg?.ClusterWindowSeconds);
+            Param("@CfgClusterWeight", cfg?.ClusterWeight);
+            Param("@CfgClusterMaxExcess", cfg?.ClusterMaxExcess);
+            Param("@CfgClusterMinEvents", cfg?.ClusterMinEvents);
+            Param("@CfgMinFrames", cfg?.MinFrames);
+            Param("@CfgTripleCapMinCount", cfg?.TripleCapMinCount);
+            Param("@CfgTrimEndSeconds", cfg?.TrimEndSeconds);
+            Param("@CfgClusterMinPeak", cfg?.ClusterMinPeak);
+
+            Param("@LongGapCount", gap?.LongGaps);
+            Param("@LongGapPct", gap?.LongGapPct);
+            Param("@LongGapThresholdMs", gap?.LongGapMs);
+            Param("@LongGapMissCount", gap?.LongGapsFollowedByMiss);
+            Param("@LongGapNextDisplayedAvg", gap?.MeanDisplayedAfterLongGap);
+
+            // Capture context and file pointers
+            Param("@SwapChainAddress", SwapChainAddress);
+            Param("@SwapChainCount", SwapChainCount > 0 ? SwapChainCount : null);
+            Param("@PresentApplication", PresentApplication);
+            Param("@PresentMode", PresentMode);
+            Param("@FileAnalysisPath", FileAnalysisPath);
+            Param("@FileRawDataPath", FileRawDataPath);
+        }
+
+        public void InsertToDatabase(int gameId, int isVR, string databasePath)
         {
             try
             {
@@ -558,7 +567,15 @@ internal class Program
                         GpuWaitAvg, GpuWaitMin, GpuWaitMax, GpuWait999th, GpuWait995th, GpuWait99th, GpuWait95th,
                         CpuBusyAvg, CpuBusyMin, CpuBusyMax, CpuBusy999th, CpuBusy995th, CpuBusy99th, CpuBusy95th,
                         CpuWaitAvg, CpuWaitMin, CpuWaitMax, CpuWait999th, CpuWait995th, CpuWait99th, CpuWait95th,
-                        ConsoleOutput
+                        StutterGrade, StutterGradeScore, StutterGradeCapped, StutterGradeNote, StutterGradeVersion,
+                        GradeFrames, GradeMissingFrames, GradeDurationSec, GradeRefreshMs, GradeRefreshSource,
+                        DoubledFrames, TripleFrames, LongestMissRefreshes, MissedFramePct, MissesPerMinute, WeightedMissPct,
+                        ClusterPeakMisses, ClusterRatio, ClusterMultiplier, EffectiveMissPct,
+                        CfgDoubledRefreshes, CfgTripleRefreshes, CfgBandA, CfgBandB, CfgBandC, CfgBandD, CfgZeroScorePct,
+                        CfgTripleWeight, CfgTripleCapGrade, CfgClusterWindowSec, CfgClusterWeight, CfgClusterMaxExcess, CfgClusterMinEvents, CfgMinFrames, CfgTripleCapMinCount, CfgTrimEndSeconds, CfgClusterMinPeak,
+                        LongGapCount, LongGapPct, LongGapThresholdMs, LongGapMissCount, LongGapNextDisplayedAvg,
+                        SwapChainAddress, SwapChainCount, PresentApplication, PresentMode,
+                        FileAnalysisPath, FileRawDataPath
                     ) VALUES (
                         @GameId,
                         @IsVR,
@@ -580,7 +597,15 @@ internal class Program
                         @GpuWaitAvg, @GpuWaitMin, @GpuWaitMax, @GpuWait999th, @GpuWait995th, @GpuWait99th, @GpuWait95th,
                         @CpuBusyAvg, @CpuBusyMin, @CpuBusyMax, @CpuBusy999th, @CpuBusy995th, @CpuBusy99th, @CpuBusy95th,
                         @CpuWaitAvg, @CpuWaitMin, @CpuWaitMax, @CpuWait999th, @CpuWait995th, @CpuWait99th, @CpuWait95th,
-                        @ConsoleOutput
+                        @StutterGrade, @StutterGradeScore, @StutterGradeCapped, @StutterGradeNote, @StutterGradeVersion,
+                        @GradeFrames, @GradeMissingFrames, @GradeDurationSec, @GradeRefreshMs, @GradeRefreshSource,
+                        @DoubledFrames, @TripleFrames, @LongestMissRefreshes, @MissedFramePct, @MissesPerMinute, @WeightedMissPct,
+                        @ClusterPeakMisses, @ClusterRatio, @ClusterMultiplier, @EffectiveMissPct,
+                        @CfgDoubledRefreshes, @CfgTripleRefreshes, @CfgBandA, @CfgBandB, @CfgBandC, @CfgBandD, @CfgZeroScorePct,
+                        @CfgTripleWeight, @CfgTripleCapGrade, @CfgClusterWindowSec, @CfgClusterWeight, @CfgClusterMaxExcess, @CfgClusterMinEvents, @CfgMinFrames, @CfgTripleCapMinCount, @CfgTrimEndSeconds, @CfgClusterMinPeak,
+                        @LongGapCount, @LongGapPct, @LongGapThresholdMs, @LongGapMissCount, @LongGapNextDisplayedAvg,
+                        @SwapChainAddress, @SwapChainCount, @PresentApplication, @PresentMode,
+                        @FileAnalysisPath, @FileRawDataPath
                     )";
 
                 // Add parameters
@@ -863,8 +888,7 @@ internal class Program
                     command.Parameters.AddWithValue("@CpuWait95th", DBNull.Value);
                 }
 
-                // Console Output
-                command.Parameters.AddWithValue("@ConsoleOutput", (object?)consoleOutput ?? DBNull.Value);
+                AddGradeParameters(command);
 
                 int rowsInserted = command.ExecuteNonQuery();
 
@@ -961,6 +985,11 @@ internal class Program
             return CreateDatabaseTable(databasePath);
         }
 
+        if (args.Any(arg => arg.Equals("--regrade", StringComparison.OrdinalIgnoreCase)))
+        {
+            return RunRegrade(args, databasePath);
+        }
+
         // Parse command-line arguments with defaults for monitoring mode
         int delayStart = 5;
         int timeout = 15;
@@ -1014,6 +1043,20 @@ internal class Program
                 {
                     Console.WriteLine($"Warning: Invalid Hz value '{args[i + 1]}', will use auto-detection");
                 }
+                i++;
+            }
+            else if (args[i].Equals("--stutter_bands", StringComparison.OrdinalIgnoreCase) && i + 1 < args.Length)
+            {
+                if (StutterGradeConfig.TryParseBands(args[i + 1], out var bands))
+                    StutterGrading.Config.BandsPct = bands;
+                else
+                    Console.WriteLine($"Warning: Invalid --stutter_bands '{args[i + 1]}' (need 4 ascending percentages), using defaults");
+                i++;
+            }
+            else if (args[i].Equals("--stutter_cluster_weight", StringComparison.OrdinalIgnoreCase) && i + 1 < args.Length)
+            {
+                if (float.TryParse(args[i + 1], NumberStyles.Float, CultureInfo.InvariantCulture, out float cw) && cw >= 0)
+                    StutterGrading.Config.ClusterWeight = cw;
                 i++;
             }
             else if (args[i].Equals("--sourcefile", StringComparison.OrdinalIgnoreCase) && i + 1 < args.Length)
@@ -1197,8 +1240,13 @@ internal class Program
         // Insert data directly to database if requested
         if (insertToDb)
         {
-            string? consoleOutput = logConsole ? consoleLog?.ToString() : null;
-            perfData.InsertToDatabase(gameId, isVR, databasePath, consoleOutput);
+            // Pointer to the console log that is written below (absolute path)
+            if (logConsole && consoleLog != null)
+            {
+                perfData.FileAnalysisPath = Path.GetFullPath($"{baseFilename}.txt");
+            }
+
+            perfData.InsertToDatabase(gameId, isVR, databasePath);
         }
 
         // Save console output to file if requested
@@ -1365,8 +1413,65 @@ internal class Program
                         CpuWait99th REAL,
                         CpuWait95th REAL,
 
-                        -- Console Output (optional diagnostic log)
-                        ConsoleOutput TEXT
+                        -- Stutter grade (DisplayedTime missed refreshes)
+                        StutterGrade TEXT,
+                        StutterGradeScore REAL,
+                        StutterGradeCapped INTEGER,
+                        StutterGradeNote TEXT,
+                        StutterGradeVersion INTEGER,
+
+                        -- Grade inputs and results
+                        GradeFrames INTEGER,
+                        GradeMissingFrames INTEGER,
+                        GradeDurationSec REAL,
+                        GradeRefreshMs REAL,
+                        GradeRefreshSource TEXT,
+                        DoubledFrames INTEGER,
+                        TripleFrames INTEGER,
+                        LongestMissRefreshes INTEGER,
+                        MissedFramePct REAL,
+                        MissesPerMinute REAL,
+                        WeightedMissPct REAL,
+                        ClusterPeakMisses INTEGER,
+                        ClusterRatio REAL,
+                        ClusterMultiplier REAL,
+                        EffectiveMissPct REAL,
+
+                        -- Grading configuration used for the row
+                        CfgDoubledRefreshes REAL,
+                        CfgTripleRefreshes REAL,
+                        CfgBandA REAL,
+                        CfgBandB REAL,
+                        CfgBandC REAL,
+                        CfgBandD REAL,
+                        CfgZeroScorePct REAL,
+                        CfgTripleWeight REAL,
+                        CfgTripleCapGrade TEXT,
+                        CfgClusterWindowSec REAL,
+                        CfgClusterWeight REAL,
+                        CfgClusterMaxExcess REAL,
+                        CfgClusterMinEvents INTEGER,
+                        CfgMinFrames INTEGER,
+                        CfgTripleCapMinCount INTEGER,
+                        CfgTrimEndSeconds REAL,
+                        CfgClusterMinPeak INTEGER,
+
+                        -- Present gap diagnostics
+                        LongGapCount INTEGER,
+                        LongGapPct REAL,
+                        LongGapThresholdMs REAL,
+                        LongGapMissCount INTEGER,
+                        LongGapNextDisplayedAvg REAL,
+
+                        -- Capture context
+                        SwapChainAddress TEXT,
+                        SwapChainCount INTEGER,
+                        PresentApplication TEXT,
+                        PresentMode TEXT,
+
+                        -- File pointers (absolute paths)
+                        FileAnalysisPath TEXT,
+                        FileRawDataPath TEXT
                     )";
 
                 command.ExecuteNonQuery();
@@ -1419,12 +1524,14 @@ internal class Program
         Console.WriteLine("  --isVR <0|1>               VR mode: 0 = Not VR, 1 = VR (default: 0)");
         Console.WriteLine("  --hz <refresh_rate>        Monitor refresh rate in Hz (e.g., 60, 144, 165)");
         Console.WriteLine("                             If not specified, auto-detects from frame data");
+        Console.WriteLine("  --stutter_bands <a,b,c,d>  Max % of missed frames for grades A,B,C,D (default 0.1,0.4,1,3)");
+        Console.WriteLine("  --stutter_cluster_weight <x> Burst penalty weight, 0 disables (default 0.1)");
         Console.WriteLine();
         Console.WriteLine("PresentMon options for FPS monitoring:");
         Console.WriteLine("  --presentmonpath <path>    Path to PresentMon.exe (required to enable FPS monitoring)");
         Console.WriteLine("  --process_name <name>      Process name to monitor (can be repeated; omit to capture all)");
         Console.WriteLine("  --deletecsv <true|false>   Delete CSV after parsing (default: true)");
-        Console.WriteLine("  --logconsole <true|false>  Capture console output to file and database (default: false)");
+        Console.WriteLine("  --logconsole <true|false>  Capture console output to a .txt file (path stored in the database) (default: false)");
         Console.WriteLine("  --logpath <directory>      Directory for CSV and log files (default: current directory)");
         Console.WriteLine();
         Console.WriteLine("Output:");
@@ -1432,6 +1539,9 @@ internal class Program
         Console.WriteLine("                             (default: C:\\vPinball\\PinUPSystem\\PUPDatabase.db)");
         Console.WriteLine("  --outputsql                Insert data directly into the database. Omit to write to console only.");
         Console.WriteLine("  --createsql                Create database table and indexes (ignores capturing - used for setup)");
+        Console.WriteLine("  --regrade                  Re-grade past runs from the CSV/TXT files in --logpath and update their database rows.");
+        Console.WriteLine("                             Dry run unless --apply is given (a backup is made first).");
+        Console.WriteLine("                             Options: --logpath <dir> --apply --force --allow-mismatch --limit <n>");
         Console.WriteLine("  --help, -h                 Show this help message");
         Console.WriteLine();
         Console.WriteLine("Example:");
@@ -1736,6 +1846,7 @@ internal class Program
                     }
                     else
                     {
+                        perfData.FileRawDataPath = Path.GetFullPath(presentMonCsvPath);
                         Console.WriteLine($"PresentMon CSV file preserved: {presentMonCsvPath}");
                     }
                 }
@@ -2305,6 +2416,16 @@ internal class Program
                     hz);
             }
 
+            // Missed-refresh grade: DisplayedTime in present order; NA/missing values are 0 and skipped
+            perfData.StutterGrade = StutterGrading.Grade(
+                perfData.PresentMonFrames.Select(f => f.DisplayedTime).ToList(), hz);
+            if (perfData.StutterGrade.Graded)
+            {
+                perfData.GapInfo = StutterGrading.AnalyzeGaps(
+                    perfData.PresentMonFrames.Select(f => (f.FrameTime, f.DisplayedTime)).ToList(),
+                    perfData.StutterGrade.RefreshMs);
+            }
+
             if (perfData.DisplayedTimeDeltaReadings.Count > 0 && perfData.DisplayedTimeReadings.Count > 0)
             {
                 perfData.StutterScoreDT = CalculateStutterScore(
@@ -2371,8 +2492,18 @@ internal class Program
             .OrderByDescending(g => g.Frames.Count)
             .ToList();
 
+        perfData.SwapChainCount = groups.Count;
+
         if (groups.Count <= 1)
+        {
+            if (groups.Count == 1)
+            {
+                perfData.SwapChainAddress = groups[0].Address;
+                perfData.PresentMode = groups[0].PresentMode;
+                perfData.PresentApplication = groups[0].Frames[0].Application;
+            }
             return;
+        }
 
         Console.WriteLine($"\nMultiple swap chains detected ({groups.Count}):");
         foreach (var g in groups)
@@ -2424,6 +2555,9 @@ internal class Program
         }
 
         Console.WriteLine($"Selected swap chain: {selected.Address} - {reason}");
+        perfData.SwapChainAddress = selected.Address;
+        perfData.PresentMode = selected.PresentMode;
+        perfData.PresentApplication = selected.Frames[0].Application;
 
         int originalCount = perfData.PresentMonFrames.Count;
         perfData.PresentMonFrames.Clear();

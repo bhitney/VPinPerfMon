@@ -6,10 +6,11 @@ A comprehensive performance monitoring tool designed for virtual pinball systems
 
 - **CPU & GPU Monitoring**: Real-time CPU utilization and NVIDIA GPU metrics (utilization and memory)
 - **Advanced Frame Analysis**: Leverages PresentMon v2 metrics for detailed frame timing, render latency, and display timing
-- **Dual Stutter Detection**: Separate scoring for rendering consistency (FrameTime) vs perceived smoothness (DisplayedTime)
+- **Stutter Grade (A-F)**: Grades perceived smoothness by counting frames displayed for more than one refresh (DisplayedTime), with FrameTime shown as a diagnostic
 - **Intelligent Warm-up Filtering**: Excludes initial startup frames to ensure accurate measurements
 - **Database Integration**: Optional SQLite storage for historical tracking and analysis
 - **Game Identification**: Track performance by GameID or source filename for flexible correlation
+- **Regrading**: Recompute the grade for past runs from their saved log and CSV files
 
 ## Requirements
 
@@ -230,40 +231,39 @@ Bottleneck Blame (bottom 1% frames):
 
 === Stutter Score Analysis ===
 
-Effective Refresh: 60.0 Hz (auto-detected from 80th %ile)
+Effective Refresh: 60.0 Hz (auto-detected from median)
 Target Frame Time: 16.67ms
 
---- FrameTime-Based Analysis (Rendering Consistency) ---
-Component Breakdown:
-  99.5 %ile Delta:   1.45ms (8.7% of target) = 100.0 pts × 50% = 50.0
-  Average Delta:     0.42ms (2.5% of target) = 100.0 pts × 25% = 25.0
-  Std Deviation:     0.85ms (5.1% of target) = 100.0 pts × 10% = 10.0
-  AnimError RMS:     0.412ms (2.5% of target) = 100.0 pts × 10% = 10.0
-  AnimError MAD:     0.284ms (1.7% of target) = 100.0 pts ×  5% = 5.0
+--- DisplayedTime Missed-Refresh Analysis (Perceived Smoothness) - GRADE ---
+  Frames analyzed:     3480 (0 without DisplayedTime), 58.0s
+  Tail excluded:       last 5.0s (300 frames) dropped in case the game exited before the trace finished
+  Refresh interval:    16.67ms (60.0 Hz, auto-detected from median)
+  Doubled (>= 1.5):   2
+  3+ refresh (>= 2.5): 0   (longest 2 refreshes)
+  Missed frames:       0.057% of frames, 2.1 per minute
+  Weighted miss rate:  0.057% (3+ refresh frames weighted x3.0 per extra refresh)
+  Clustering:          peak 1 misses in a 5s window, 5.8x the average window, penalty x1.00 (needs >= 2 in one window)
+  Effective miss rate: 0.057%
+  Bands (A/B/C/D):     < 0.1% / < 0.4% / < 1% / < 3% (F above)
 
---- DisplayedTime-Based Analysis (Perceived Smoothness) - RECOMMENDED ---
-Component Breakdown:
-  99.5 %ile Delta:   1.38ms (8.3% of target) = 100.0 pts × 50% = 50.0
-  Average Delta:     0.38ms (2.3% of target) = 100.0 pts × 25% = 25.0
-  Std Deviation:     0.82ms (4.9% of target) = 100.0 pts × 10% = 10.0
-  AnimError RMS:     0.412ms (2.5% of target) = 100.0 pts × 10% = 10.0
-  AnimError MAD:     0.284ms (1.7% of target) = 100.0 pts ×  5% = 5.0
+STUTTER GRADE (DisplayedTime): 94.3/100 (Grade: A (Excellent)) - RECOMMENDED
+  - Based on frames displayed for more than one refresh
 
-STUTTER SCORE (FrameTime):     100.0/100 (Grade: A (Excellent))
-  → Measures rendering pipeline consistency
+Diagnostic only - FrameTime score: 100.0/100 (rendering pipeline consistency, not graded)
+  - Present() timing can be scattered by frame pacing without any visible effect.
 
-STUTTER SCORE (DisplayedTime): 100.0/100 (Grade: A (Excellent)) - RECOMMENDED
-  → Measures perceived visual smoothness
+Present gaps >= 25.00ms: 0 (0.0% of frames)
 
-Interpretation:
-  90-100 (A): Excellent - No perceptible stutter
-  80-89  (B): Good - Minor occasional hitches
-  70-79  (C): Fair - Noticeable inconsistency
-  60-69  (D): Poor - Frequent stutters
-  0-59   (F): Severe - Gameplay significantly impacted
+Animation error (informational, not graded): RMS 0.412ms, MAD 0.284ms
+  - Not validated for renderers that simulate to a predicted display time.
 
-Note: DisplayedTime score is more representative of user experience.
-      FrameTime score is useful for diagnosing rendering pipeline issues.
+Interpretation (A-F is the share of frames displayed for 2+ refreshes):
+  A: Excellent - virtually no missed refreshes
+  B: Good - rare missed refreshes
+  C: Fair - noticeable misses
+  D: Poor - frequent misses
+  F: Unplayable
+  Two or more 3+ refresh frames cap the grade at C.
 ```
 
 ---
@@ -296,7 +296,7 @@ VPinPerfMon captures several key frame timing metrics from PresentMon v2:
 - Measures the difference between intended and actual frame presentation time (from PresentMon v2)
 - **MAD (Mean Absolute Deviation)**: Average of |error| values — shows typical presentation timing accuracy
 - **RMS (Root Mean Square)**: `sqrt(mean(error²))` — emphasizes larger timing errors quadratically, making it more sensitive to significant stutter events
-- Can be zero in some present modes (e.g., when the compositor doesn't report animation timing). When unavailable, stutter scoring redistributes its weight to the 99.5th percentile delta.
+- Can be zero in some present modes (e.g., when the compositor doesn't report animation timing). It is shown for information only and is **not part of the grade**: PresentMon measures it against the CPU present time, which does not fit a renderer that simulates to a predicted display time.
 
 **Bottleneck Blame (CPU vs GPU)**
 - Analyzes the **bottom 1% of frames** (worst frame times) to determine whether the CPU or GPU was the primary bottleneck
@@ -310,14 +310,14 @@ VPinPerfMon captures several key frame timing metrics from PresentMon v2:
 ### Percentile Metrics
 
 - **99.9th Percentile**: The value below which 99.9% of measurements fall (captures extreme outliers)
-- **99.5th Percentile**: The value below which 99.5% of measurements fall (used in stutter score calculation)
+- **99.5th Percentile**: The value below which 99.5% of measurements fall
 - **99th Percentile**: The value below which 99% of measurements fall (indicates typical worst-case performance)
 - **95th Percentile**: The value below which 95% of measurements fall
 - **1% Low FPS**: Average FPS of the worst 1% of frames (industry-standard metric for stuttering)
 
 ---
 
-## Understanding Stutter & The Stutter Score
+## Understanding Stutter & The Stutter Grade
 
 ### What is Stutter?
 
@@ -336,68 +336,74 @@ VPinPerfMon captures several key frame timing metrics from PresentMon v2:
 
 The human visual system is extremely sensitive to timing irregularities. A game running at a "perfect" 60 FPS average can still feel choppy if individual frames vary between 12ms and 25ms. Your brain expects 16.67ms intervals (at 60Hz)—deviations break the illusion of smooth motion.
 
-### The Dual Stutter Score System
+### The Stutter Grade (A-F)
 
-VPinPerfMon calculates **two independent stutter scores** to capture different aspects of performance:
+VPinPerfMon grades a run by counting **missed refreshes**: frames that stayed on screen for more than one refresh interval. For a game where you watch a fast-moving ball, one missed refresh is visible, so this is the number the grade is built on. It is measured from `DisplayedTime`, the time each frame was actually on screen.
 
-#### 1. **Frame Time Stutter Score (FT)** - Rendering Consistency
-- Based on `FrameTime` deltas (frame-to-frame variation in rendering time)
-- Measures how consistently the rendering pipeline executes
-- Detects CPU/GPU bottlenecks, script hitches, and resource contention
-- **Use case**: Diagnosing rendering performance issues
+#### How the grade is calculated
 
-#### 2. **Displayed Time Stutter Score (DT)** - Perceived Smoothness [RECOMMENDED]
-- Based on `DisplayedTime` deltas (frame-to-frame variation in actual display timing)
-- Measures what the user actually sees on screen
-- Accounts for compositor delays, VSync behavior, and display pipeline latency
-- **Use case**: Evaluating real-world user experience
+1. **Find one refresh interval.** This is `1000 / --hz` if you pass `--hz`, otherwise the median `DisplayedTime` (for example 7.25 ms on a 138 Hz playfield).
+2. **Drop the tail.** The last 5 seconds of the capture are excluded, in case the game exited before the trace finished and left inflated frames at the end. Frames with no `DisplayedTime` (`NA`) are skipped.
+3. **Count missed refreshes.**
+   - A frame displayed for **1.5 refreshes or more** is *doubled*.
+   - A frame displayed for **2.5 refreshes or more** is a *3+ refresh* frame, weighted 3x per extra refresh.
+4. **Adjust for bursts.** The capture is split into 5-second windows. If the worst window holds at least 2 misses and is much worse than the average window, the miss rate is raised by up to 40%. A burst of hitches is more noticeable than the same number spread out.
+5. **Band the result.** The resulting *effective miss rate* is compared against the bands below.
+6. **Cap.** Two or more 3+ refresh frames cap the grade at C. A single one does not.
 
-> **Recommendation**: Focus on **Displayed Time (DT)** for overall experience assessment, but compare both scores to isolate issues. If FT is much worse than DT, you have rendering problems. If DT is worse, you have display pipeline or VSync issues.
+| Grade | Effective miss rate | Meaning |
+|-------|---------------------|---------|
+| **A** | under 0.1% | Excellent - virtually no missed refreshes |
+| **B** | 0.1% to under 0.4% | Good - rare missed refreshes |
+| **C** | 0.4% to under 1% | Fair - noticeable misses |
+| **D** | 1% to under 3% | Poor - frequent misses |
+| **F** | 3% or more | Unplayable |
 
-### How the Stutter Score is Calculated
+The 0-100 **score** is continuous, so there are no cliffs at a threshold: 0% maps to 100, the band edges map to 90 / 80 / 70 / 60, and the score reaches 0 at 10% (or 1.5x the D band, if larger). A capped run shows a score of 79.9.
 
-The stutter score (0-100, higher is better) uses a **weighted composite** of five metrics:
+> **The bands are starting points.** They were chosen to put a heavy multiball run at C and clean runs at A. Calibrate them against captures you have judged by feel, and change them with `--stutter_bands` (see below).
 
-| Metric | Weight | Purpose |
-|--------|--------|---------|
-| **99.5th Percentile Delta** | 50% | Captures recurring stutters that users consistently notice |
-| **Average Delta** | 25% | Measures general frame-to-frame consistency |
-| **Animation Error RMS** | 10% | Presentation timing accuracy (emphasizes large errors) |
-| **Standard Deviation** | 10% | Verifies overall variance in frame timing |
-| **Animation Error MAD** | 5% | Typical presentation timing deviation |
+#### Tuning the grade
 
-> **Fallback**: When AnimationError is unavailable (some present modes report zero), its 15% weight is redistributed to the 99.5th Percentile Delta (→ 65%), keeping the score meaningful.
+| Option | Default | Meaning |
+|--------|---------|---------|
+| `--stutter_bands a,b,c,d` | `0.1,0.4,1,3` | Upper limit, in percent of frames, for grades A, B, C and D (must be ascending) |
+| `--stutter_cluster_weight <x>` | `0.1` | Strength of the burst adjustment. `0` turns it off |
 
-**Scoring Formula** (per component):
+The other thresholds (1.5 and 2.5 refreshes, the 3x weight, the cap count, the 5-second tail and window) are defaults in the code (`StutterGradeConfig`). Every run stores the thresholds it was graded with in the database (`Cfg*` columns), so rows stay reproducible after you retune.
 
-Each metric is expressed as a **percentage of target frame time**, then scored on a curve:
+#### Reading the printed breakdown
 
-- `< 10%` of target → **100 points** (perfect)
-- `10-20%` → **100 to 80** (excellent)
-- `20-40%` → **80 to 60** (good)
-- `40-60%` → **60 to 20** (problematic)
-- `> 60%` → **20 to 0** (severe stutter)
+```
+STUTTER GRADE (DisplayedTime): 94.3/100 (Grade: A (Excellent)) - RECOMMENDED
+```
 
-**Example** (60Hz = 16.67ms target):
-- If 99.5th percentile delta is 1.2ms → 7.2% of target → **100 points**
-- If AnimError RMS is 0.4ms → 2.4% of target → **100 points**
-- If average delta is 2.5ms → 15% of target → **90 points**
+The lines above it show every number that went into the grade: frames analyzed, doubled and 3+ refresh counts, misses per minute, the burst adjustment, the effective miss rate, and whether the cap applied. If a grade surprises you, start there.
 
-Final score: `(100 × 0.50) + (90 × 0.25) + (100 × 0.10) + (100 × 0.10) + (100 × 0.05) = 87.5`
+#### Diagnostics shown next to the grade (not graded)
 
-### Interpreting Scores
+- **FrameTime score.** The old weighted score based on `FrameTime` deltas. It describes how evenly the app calls Present(), which frame pacing can scatter without any visible effect. Use it to diagnose the rendering pipeline, not to judge smoothness.
+- **Present gaps.** The share of frames preceded by a long gap between Present() calls, and what the next frame's displayed time was. A long gap followed by a one-refresh frame was not visible.
+- **Animation error (MAD and RMS).** PresentMon measures this against the CPU present time. That does not fit a renderer that simulates to a predicted display time, so it is not validated for the grade and is shown for information only.
 
-| Score Range | Grade | Description |
-|-------------|-------|-------------|
-| **90-100** | A (Excellent) | No perceptible stutter; buttery smooth experience |
-| **80-89** | B (Good) | Minor occasional hitches; acceptable for most users |
-| **70-79** | C (Fair) | Noticeable inconsistency; consider optimization |
-| **60-69** | D (Poor) | Frequent stutters; significant impact on experience |
-| **< 60** | F (Severe) | Gameplay significantly impacted; major issues |
+#### Which swap chain is graded
+
+If the capture contains more than one swap chain (for example when all processes are captured, or a build that handles several windows), the swap chain with the most frames is used. When the top two are within 15% of each other, ties are broken by average GPU Busy time, then a hardware flip present mode, then average frame time. The chosen swap chain, the count of swap chains, the application and the present mode are stored with the row. Use `--process_name` to avoid unrelated applications.
+
+#### Interpreting results: things to know
+
+- **Variable refresh (G-Sync / FreeSync).** With VRR, a late frame stretches the refresh instead of waiting for the next fixed one, so a miss is far less visible than the grade suggests. "Refresh" is also the frame cap, not the panel. Keep the frame cap fixed when comparing runs. The tool cannot detect the sync mode.
+- **Frame pacing** (for example in BGFX) evens out Present() timing and reduces late frames, but on a fixed refresh a frame that still misses is displayed for a full extra refresh.
+- **Short captures.** With fewer than 100 frames after warm-up and tail removal, the run is not graded.
+- **No `DisplayedTime`.** If every frame is `NA` (it can be missing outside a flip mode), the run is not graded and the reason is stored.
+
+#### Legacy scores
+
+`StutterScoreFT` and `StutterScoreDT` are still calculated and stored exactly as before, a weighted blend of the 99.5th percentile delta (50%), average delta (25%), standard deviation (10%) and animation error RMS (10%) and MAD (5%). They are kept so existing reports keep working. They have two known weaknesses: the 99.5th percentile jumps from full marks to zero depending on whether the miss rate is above or below 0.5%, and the average and standard deviation components score full marks for almost any VSync-locked run. Prefer the grade.
 
 ### Refresh Rate Detection
 
-VPinPerfMon automatically detects your target frame time using the **80th percentile** of actual frame times (robust against outliers like loading stutters). You can override this with `--hz <rate>` if auto-detection fails:
+VPinPerfMon detects the target frame time from the **median** `DisplayedTime`, which is robust against outliers. Override it with `--hz <rate>` if auto-detection fails, but note that with a variable refresh rate the detected value follows the frame cap:
 
 ```bash
 VPinPerfMon.exe --hz 144 --timeout 60 --process_name VPinballX64.exe
@@ -431,11 +437,12 @@ VPinPerfMon.exe --gameid 1523 --timeout 60 --process_name VPinballX64.exe --outp
 The `GameId` column in `CustomPerfStats` will match the `GameId` in your `Games` table, enabling queries like:
 
 ```sql
-SELECT g.GameName, AVG(p.FpsAverage) as AvgFPS, AVG(p.StutterScoreDT) as AvgStutter
+SELECT g.GameName, AVG(p.FpsAverage) as AvgFPS, AVG(p.StutterGradeScore) as AvgGradeScore
 FROM CustomPerfStats p
 JOIN Games g ON p.GameId = g.GameId
+WHERE p.StutterGradeScore IS NOT NULL
 GROUP BY g.GameName
-ORDER BY AvgStutter DESC;
+ORDER BY AvgGradeScore ASC;
 ```
 
 #### 2. **SourceFile** (Fallback Method)
@@ -461,17 +468,41 @@ ORDER BY EntryDate DESC;
 
 ### Creating the Database Table
 
-First time setup—create the `CustomPerfStats` table and indexes:
+First time setup - create the `CustomPerfStats` table and indexes:
 
 ```bash
 VPinPerfMon.exe --createsql --sqlitedbpath "C:\vPinball\PinUPSystem\PUPDatabase.db"
 ```
 
-**To migrate an existing table** (adds missing columns without losing data):
+### Upgrading an Existing Database
+
+A database created before the stutter grade was added needs the new columns. The scripts are in the `Migrations` folder of the source repository. **Back up the database first**, and close any program that has it open.
 
 ```bash
-sqlite3 PUPDatabase.db < MigrateCustomPerfStats.sql
+sqlite3 PUPDatabase.db < Migrations\001_add_stutter_grade_columns.sql
 ```
+
+- Run `001` **once**, and **before** deploying the new VPinPerfMon.exe. It adds nullable columns only, so existing rows are untouched, but SQLite fails with `duplicate column name` if a column already exists.
+- `002_drop_consoleoutput.sql` removes the old `ConsoleOutput` column. Run it only after the new version has been deployed and you have confirmed nothing still writes to that column. It needs SQLite 3.35 or later and cannot be undone.
+- The new version no longer stores console text in the database. With `--logconsole true` it writes a `.txt` file and stores its path in `FileAnalysisPath`. When the CSV is kept (`--deletecsv false`) its path is stored in `FileRawDataPath`.
+
+### Regrading Past Runs
+
+If you kept the `.txt` and `.csv` files from earlier runs (`--logconsole true --deletecsv false --logpath <dir>`), `--regrade` can compute the new grade for those rows. It is a **dry run unless you add `--apply`**:
+
+```bash
+VPinPerfMon.exe --regrade --sqlitedbpath "C:\vPinball\PinUPSystem\PUPDatabase.db" --logpath "C:\vPinball\mytools\VPinPerfMon\logs" --limit 10
+VPinPerfMon.exe --regrade --apply --sqlitedbpath "C:\vPinball\PinUPSystem\PUPDatabase.db" --logpath "C:\vPinball\mytools\VPinPerfMon\logs"
+```
+
+- **Matching.** Each run's `.txt` is matched to a database row by Game ID, source file, and an entry time within 2 minutes of the `.txt` file's last-write time (`EntryDate` is UTC). Missing, ambiguous and already-claimed matches are listed and skipped, never guessed.
+- **Same settings as the run.** The refresh override, process filter and warm-up are read from the run's `.txt`, so you do not pass them. The grading thresholds are the current defaults.
+- **Safety checks.** The regraded frame count must equal the stored `PresentMonFrameCount` (override with `--allow-mismatch`). The database is backed up (`<db>.bak_<timestamp>`) before any update, and all updates run in one transaction.
+- **Idempotent.** Rows that already have a grade are skipped unless you add `--force`.
+- **What it writes.** The grade and its inputs, the capture context, and the two file paths. The old `StutterScoreFT` and `StutterScoreDT` values are not changed.
+- **Not regradable.** Runs whose CSV was deleted cannot be regraded.
+
+Run it from a console (not a minimized batch launch) and not while a capture is in progress.
 
 ---
 
@@ -496,8 +527,19 @@ sqlite3 PUPDatabase.db < MigrateCustomPerfStats.sql
 - `--createsql` - Create database table and indexes (setup mode)
 
 ### Logging Options
-- `--logconsole <true|false>` - Capture console output to file and database (default: false)
+- `--logconsole <true|false>` - Write the console output to a `.txt` file in `--logpath`; its path is stored in the database (default: false)
 - `--logpath <directory>` - Directory for CSV and log files (default: current directory)
+
+### Regrade Options
+- `--regrade` - Regrade past runs from the `.txt` and `.csv` files in `--logpath` and update their database rows. Dry run unless `--apply` is given
+- `--apply` - Write the regraded results (a backup of the database is made first)
+- `--force` - Also regrade rows that already have a grade
+- `--allow-mismatch` - Accept a regraded frame count that differs from the stored one
+- `--limit <n>` - Only process the `n` most recent runs that have a CSV
+
+### Stutter Grade Options
+- `--stutter_bands <a,b,c,d>` - Upper limit (percent of frames) for grades A, B, C, D (default: `0.1,0.4,1,3`)
+- `--stutter_cluster_weight <x>` - Strength of the burst adjustment, `0` disables it (default: `0.1`)
 
 ### Other
 - `--help`, `-h` - Show help message
@@ -541,7 +583,7 @@ powershell -Command "[System.Threading.EventWaitHandle]::OpenExisting('Local\VPi
 
 ## Database Schema
 
-The `CustomPerfStats` table stores **84 columns** of performance data:
+The `CustomPerfStats` table stores one row per run:
 
 - **Core**: Id, GameId, IsVR, SourceFile, EntryDate, SampleCount, PresentMonFrameCount
 - **CPU**: Average, Min, Max (from NVML) + Busy/Wait metrics (from PresentMon)
@@ -552,14 +594,26 @@ The `CustomPerfStats` table stores **84 columns** of performance data:
 - **Frame Time Delta**: Avg, Max, 99.9th, 99.5th, 99th, 95th
 - **Displayed Time**: Avg, Min, Max, 99.9th, 99.5th, 99th, 95th, StdDev
 - **Displayed Time Delta**: Avg, Max, 99.9th, 99.5th, 99th, 95th
-- **Animation Error**: MAD, RMS
-- **Stutter Scores**: StutterScoreFT, StutterScoreDT
+- **Animation Error**: MAD, RMS (informational)
+- **Legacy Stutter Scores**: StutterScoreFT, StutterScoreDT (the old weighted scores, still written)
 - **Bottleneck Blame**: BlameCpuPct, BlameGpuPct
-- **GPU Busy**: Avg, Min, Max, 99.9th, 99.5th, 99th, 95th
-- **GPU Wait**: Avg, Min, Max, 99.9th, 99.5th, 99th, 95th
-- **CPU Busy**: Avg, Min, Max, 99.9th, 99.5th, 99th, 95th
-- **CPU Wait**: Avg, Min, Max, 99.9th, 99.5th, 99th, 95th
-- **Console Output**: Optional diagnostic log text
+- **GPU Busy / GPU Wait / CPU Busy / CPU Wait**: Avg, Min, Max, 99.9th, 99.5th, 99th, 95th
+- **Stutter Grade**: StutterGrade (A-F, `NULL` if not graded), StutterGradeScore, StutterGradeCapped, StutterGradeNote (why it was not graded), StutterGradeVersion (`NULL` on rows graded before the grade existed)
+- **Grade inputs and results**: GradeFrames, GradeMissingFrames, GradeDurationSec, GradeRefreshMs, GradeRefreshSource (`manual` or `auto`), DoubledFrames, TripleFrames, LongestMissRefreshes, MissedFramePct, MissesPerMinute, WeightedMissPct, ClusterPeakMisses, ClusterRatio, ClusterMultiplier, EffectiveMissPct
+- **Grading configuration used**: CfgDoubledRefreshes, CfgTripleRefreshes, CfgBandA-D, CfgZeroScorePct, CfgTripleWeight, CfgTripleCapGrade, CfgTripleCapMinCount, CfgTrimEndSeconds, CfgClusterWindowSec, CfgClusterWeight, CfgClusterMaxExcess, CfgClusterMinEvents, CfgClusterMinPeak, CfgMinFrames
+- **Present gap diagnostics**: LongGapCount, LongGapPct, LongGapThresholdMs, LongGapMissCount, LongGapNextDisplayedAvg
+- **Capture context**: SwapChainAddress, SwapChainCount, PresentApplication, PresentMode
+- **File pointers**: FileAnalysisPath (console `.txt`), FileRawDataPath (PresentMon `.csv`). These are absolute paths recorded at run time; the files may have been cleaned up since.
+
+Compare old and new scores on graded rows:
+
+```sql
+SELECT Id, SourceFile, ROUND(StutterScoreDT, 1) AS OldDT, StutterGrade, ROUND(StutterGradeScore, 1) AS NewScore,
+	   DoubledFrames, TripleFrames, MissesPerMinute
+FROM CustomPerfStats
+WHERE StutterGradeVersion IS NOT NULL
+ORDER BY EntryDate DESC;
+```
 
 ---
 

@@ -1,4 +1,4 @@
-CREATE TABLE IF NOT EXISTS CustomPerfStats (
+﻿CREATE TABLE IF NOT EXISTS CustomPerfStats (
     Id INTEGER PRIMARY KEY AUTOINCREMENT,
     GameId INTEGER NOT NULL DEFAULT 0,
     IsVR INTEGER NOT NULL DEFAULT 0,
@@ -115,8 +115,65 @@ CREATE TABLE IF NOT EXISTS CustomPerfStats (
     CpuWait99th REAL,
     CpuWait95th REAL,
 
-    -- Console Output (optional diagnostic log)
-    ConsoleOutput TEXT
+    -- Stutter grade (DisplayedTime missed refreshes)
+    StutterGrade TEXT,            -- A/B/C/D/F, NULL when not graded
+    StutterGradeScore REAL,       -- continuous 0-100
+    StutterGradeCapped INTEGER,   -- 1 if capped by a 3+ refresh frame
+    StutterGradeNote TEXT,        -- reason when not graded
+    StutterGradeVersion INTEGER,  -- methodology version (NULL = legacy rows)
+
+    -- Grade inputs and results
+    GradeFrames INTEGER,
+    GradeMissingFrames INTEGER,
+    GradeDurationSec REAL,
+    GradeRefreshMs REAL,
+    GradeRefreshSource TEXT,      -- 'manual' or 'auto'
+    DoubledFrames INTEGER,
+    TripleFrames INTEGER,
+    LongestMissRefreshes INTEGER,
+    MissedFramePct REAL,
+    MissesPerMinute REAL,
+    WeightedMissPct REAL,
+    ClusterPeakMisses INTEGER,
+    ClusterRatio REAL,
+    ClusterMultiplier REAL,
+    EffectiveMissPct REAL,
+
+    -- Grading configuration used for the row
+    CfgDoubledRefreshes REAL,
+    CfgTripleRefreshes REAL,
+    CfgBandA REAL,
+    CfgBandB REAL,
+    CfgBandC REAL,
+    CfgBandD REAL,
+    CfgZeroScorePct REAL,
+    CfgTripleWeight REAL,
+    CfgTripleCapGrade TEXT,
+    CfgClusterWindowSec REAL,
+    CfgClusterWeight REAL,
+    CfgClusterMaxExcess REAL,
+    CfgClusterMinEvents INTEGER,
+    CfgMinFrames INTEGER,
+    CfgTripleCapMinCount INTEGER,
+    CfgTrimEndSeconds REAL,
+    CfgClusterMinPeak INTEGER,
+
+    -- Present gap diagnostics (informational, not graded)
+    LongGapCount INTEGER,
+    LongGapPct REAL,
+    LongGapThresholdMs REAL,
+    LongGapMissCount INTEGER,
+    LongGapNextDisplayedAvg REAL,
+
+    -- Capture context
+    SwapChainAddress TEXT,
+    SwapChainCount INTEGER,
+    PresentApplication TEXT,
+    PresentMode TEXT,
+
+    -- File pointers (absolute paths; files may be cleaned up later)
+    FileAnalysisPath TEXT,        -- console output .txt
+    FileRawDataPath TEXT          -- PresentMon .csv (NULL if deleted at run time)
 );
 
 -- Indexes for better query performance
