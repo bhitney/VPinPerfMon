@@ -46,6 +46,7 @@ ALTER TABLE CustomPerfStats ADD COLUMN CfgMinFrames INTEGER;
 ALTER TABLE CustomPerfStats ADD COLUMN CfgTripleCapMinCount INTEGER;
 ALTER TABLE CustomPerfStats ADD COLUMN CfgTrimEndSeconds REAL;
 ALTER TABLE CustomPerfStats ADD COLUMN CfgClusterMinPeak INTEGER;
+ALTER TABLE CustomPerfStats ADD COLUMN CfgTrimStartSeconds REAL;      -- warm-up seconds ignored at the start of the capture (--delaystart)
 
 -- Present gap diagnostics (informational, not graded)
 ALTER TABLE CustomPerfStats ADD COLUMN LongGapCount INTEGER;

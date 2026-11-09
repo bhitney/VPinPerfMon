@@ -157,6 +157,7 @@
     CfgTripleCapMinCount INTEGER,
     CfgTrimEndSeconds REAL,
     CfgClusterMinPeak INTEGER,
+    CfgTrimStartSeconds REAL,      -- warm-up seconds ignored at the start of the capture (--delaystart)
 
     -- Present gap diagnostics (informational, not graded)
     LongGapCount INTEGER,

@@ -118,6 +118,9 @@ internal partial class Program
         public string? FileAnalysisPath { get; set; }
         public string? FileRawDataPath { get; set; }
 
+        // Warm-up seconds ignored at the start of the capture (--delaystart)
+        public int? DelayStartSeconds { get; set; }
+
         // Monitor Refresh Rate (optional manual override)
         public float? Hz { get; set; }
 
@@ -519,6 +522,7 @@ internal partial class Program
             Param("@CfgTripleCapMinCount", cfg?.TripleCapMinCount);
             Param("@CfgTrimEndSeconds", cfg?.TrimEndSeconds);
             Param("@CfgClusterMinPeak", cfg?.ClusterMinPeak);
+            Param("@CfgTrimStartSeconds", DelayStartSeconds);
 
             Param("@LongGapCount", gap?.LongGaps);
             Param("@LongGapPct", gap?.LongGapPct);
@@ -572,7 +576,7 @@ internal partial class Program
                         DoubledFrames, TripleFrames, LongestMissRefreshes, MissedFramePct, MissesPerMinute, WeightedMissPct,
                         ClusterPeakMisses, ClusterRatio, ClusterMultiplier, EffectiveMissPct,
                         CfgDoubledRefreshes, CfgTripleRefreshes, CfgBandA, CfgBandB, CfgBandC, CfgBandD, CfgZeroScorePct,
-                        CfgTripleWeight, CfgTripleCapGrade, CfgClusterWindowSec, CfgClusterWeight, CfgClusterMaxExcess, CfgClusterMinEvents, CfgMinFrames, CfgTripleCapMinCount, CfgTrimEndSeconds, CfgClusterMinPeak,
+                        CfgTripleWeight, CfgTripleCapGrade, CfgClusterWindowSec, CfgClusterWeight, CfgClusterMaxExcess, CfgClusterMinEvents, CfgMinFrames, CfgTripleCapMinCount, CfgTrimEndSeconds, CfgClusterMinPeak, CfgTrimStartSeconds,
                         LongGapCount, LongGapPct, LongGapThresholdMs, LongGapMissCount, LongGapNextDisplayedAvg,
                         SwapChainAddress, SwapChainCount, PresentApplication, PresentMode,
                         FileAnalysisPath, FileRawDataPath
@@ -602,7 +606,7 @@ internal partial class Program
                         @DoubledFrames, @TripleFrames, @LongestMissRefreshes, @MissedFramePct, @MissesPerMinute, @WeightedMissPct,
                         @ClusterPeakMisses, @ClusterRatio, @ClusterMultiplier, @EffectiveMissPct,
                         @CfgDoubledRefreshes, @CfgTripleRefreshes, @CfgBandA, @CfgBandB, @CfgBandC, @CfgBandD, @CfgZeroScorePct,
-                        @CfgTripleWeight, @CfgTripleCapGrade, @CfgClusterWindowSec, @CfgClusterWeight, @CfgClusterMaxExcess, @CfgClusterMinEvents, @CfgMinFrames, @CfgTripleCapMinCount, @CfgTrimEndSeconds, @CfgClusterMinPeak,
+                        @CfgTripleWeight, @CfgTripleCapGrade, @CfgClusterWindowSec, @CfgClusterWeight, @CfgClusterMaxExcess, @CfgClusterMinEvents, @CfgMinFrames, @CfgTripleCapMinCount, @CfgTrimEndSeconds, @CfgClusterMinPeak, @CfgTrimStartSeconds,
                         @LongGapCount, @LongGapPct, @LongGapThresholdMs, @LongGapMissCount, @LongGapNextDisplayedAvg,
                         @SwapChainAddress, @SwapChainCount, @PresentApplication, @PresentMode,
                         @FileAnalysisPath, @FileRawDataPath
@@ -1455,6 +1459,7 @@ internal partial class Program
                         CfgTripleCapMinCount INTEGER,
                         CfgTrimEndSeconds REAL,
                         CfgClusterMinPeak INTEGER,
+                        CfgTrimStartSeconds REAL,
 
                         -- Present gap diagnostics
                         LongGapCount INTEGER,
@@ -1636,7 +1641,7 @@ internal partial class Program
         string baseFilename,
         CancellationToken cancellationToken)
     {
-        PerformanceData perfData = new() { Hz = hz, SourceFile = sourceFile, ProcessFiltered = processNames.Count > 0 };
+        PerformanceData perfData = new() { Hz = hz, SourceFile = sourceFile, ProcessFiltered = processNames.Count > 0, DelayStartSeconds = delayStart };
         Stopwatch monitoringTimer = Stopwatch.StartNew();
         bool recordingStarted = false;
 

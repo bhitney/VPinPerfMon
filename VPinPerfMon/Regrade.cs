@@ -15,7 +15,7 @@ internal partial class Program
         "ClusterPeakMisses", "ClusterRatio", "ClusterMultiplier", "EffectiveMissPct",
         "CfgDoubledRefreshes", "CfgTripleRefreshes", "CfgBandA", "CfgBandB", "CfgBandC", "CfgBandD", "CfgZeroScorePct",
         "CfgTripleWeight", "CfgTripleCapGrade", "CfgClusterWindowSec", "CfgClusterWeight", "CfgClusterMaxExcess",
-        "CfgClusterMinEvents", "CfgMinFrames", "CfgTripleCapMinCount", "CfgTrimEndSeconds", "CfgClusterMinPeak",
+        "CfgClusterMinEvents", "CfgMinFrames", "CfgTripleCapMinCount", "CfgTrimEndSeconds", "CfgClusterMinPeak", "CfgTrimStartSeconds",
         "LongGapCount", "LongGapPct", "LongGapThresholdMs", "LongGapMissCount", "LongGapNextDisplayedAvg",
         "SwapChainAddress", "SwapChainCount", "PresentApplication", "PresentMode",
         "FileAnalysisPath", "FileRawDataPath"
@@ -120,10 +120,18 @@ internal partial class Program
 
             using (SqliteCommand check = connection.CreateCommand())
             {
-                check.CommandText = "SELECT COUNT(*) FROM pragma_table_info('CustomPerfStats') WHERE name IN ('StutterGradeVersion', 'FileRawDataPath', 'FileAnalysisPath')";
-                if (Convert.ToInt64(check.ExecuteScalar(), CultureInfo.InvariantCulture) < 3)
+                check.CommandText = "SELECT name FROM pragma_table_info('CustomPerfStats')";
+                HashSet<string> existing = new(StringComparer.OrdinalIgnoreCase);
+                using (SqliteDataReader columns = check.ExecuteReader())
                 {
-                    Console.WriteLine("ERROR: The new grade columns are missing. Run Migrations\\001_add_stutter_grade_columns.sql first.");
+                    while (columns.Read()) existing.Add(columns.GetString(0));
+                }
+
+                string[] missingColumns = GradeColumns.Where(c => !existing.Contains(c)).ToArray();
+                if (missingColumns.Length > 0)
+                {
+                    Console.WriteLine($"ERROR: The database is missing {missingColumns.Length} column(s) that --regrade writes: {string.Join(", ", missingColumns)}");
+                    Console.WriteLine("Apply Migrations\\001_add_stutter_grade_columns.sql (or the individual ALTER TABLE statements for the missing columns) first.");
                     return 1;
                 }
             }
@@ -255,7 +263,8 @@ internal partial class Program
                 {
                     Hz = header.Hz,
                     SourceFile = header.SourceFile,
-                    ProcessFiltered = header.Processes.Count > 0
+                    ProcessFiltered = header.Processes.Count > 0,
+                    DelayStartSeconds = header.DelayStart
                 };
 
                 TextWriter originalOut = Console.Out;

@@ -600,7 +600,7 @@ The `CustomPerfStats` table stores one row per run:
 - **GPU Busy / GPU Wait / CPU Busy / CPU Wait**: Avg, Min, Max, 99.9th, 99.5th, 99th, 95th
 - **Stutter Grade**: StutterGrade (A-F, `NULL` if not graded), StutterGradeScore, StutterGradeCapped, StutterGradeNote (why it was not graded), StutterGradeVersion (`NULL` on rows graded before the grade existed)
 - **Grade inputs and results**: GradeFrames, GradeMissingFrames, GradeDurationSec, GradeRefreshMs, GradeRefreshSource (`manual` or `auto`), DoubledFrames, TripleFrames, LongestMissRefreshes, MissedFramePct, MissesPerMinute, WeightedMissPct, ClusterPeakMisses, ClusterRatio, ClusterMultiplier, EffectiveMissPct
-- **Grading configuration used**: CfgDoubledRefreshes, CfgTripleRefreshes, CfgBandA-D, CfgZeroScorePct, CfgTripleWeight, CfgTripleCapGrade, CfgTripleCapMinCount, CfgTrimEndSeconds, CfgClusterWindowSec, CfgClusterWeight, CfgClusterMaxExcess, CfgClusterMinEvents, CfgClusterMinPeak, CfgMinFrames
+- **Grading configuration used**: CfgDoubledRefreshes, CfgTripleRefreshes, CfgBandA-D, CfgZeroScorePct, CfgTripleWeight, CfgTripleCapGrade, CfgTripleCapMinCount, CfgTrimStartSeconds, CfgTrimEndSeconds, CfgClusterWindowSec, CfgClusterWeight, CfgClusterMaxExcess, CfgClusterMinEvents, CfgClusterMinPeak, CfgMinFrames
 - **Present gap diagnostics**: LongGapCount, LongGapPct, LongGapThresholdMs, LongGapMissCount, LongGapNextDisplayedAvg
 - **Capture context**: SwapChainAddress, SwapChainCount, PresentApplication, PresentMode
 - **File pointers**: FileAnalysisPath (console `.txt`), FileRawDataPath (PresentMon `.csv`). These are absolute paths recorded at run time; the files may have been cleaned up since.

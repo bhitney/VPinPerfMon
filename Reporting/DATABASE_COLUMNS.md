@@ -58,9 +58,15 @@ The grade counts **missed refreshes**: frames that stayed on screen for more tha
 
 ### Grading configuration (for reproducibility)
 
-`CfgDoubledRefreshes`, `CfgTripleRefreshes`, `CfgBandA`, `CfgBandB`, `CfgBandC`, `CfgBandD`, `CfgZeroScorePct`, `CfgTripleWeight`, `CfgTripleCapGrade`, `CfgTripleCapMinCount`, `CfgTrimEndSeconds`, `CfgClusterWindowSec`, `CfgClusterWeight`, `CfgClusterMaxExcess`, `CfgClusterMinEvents`, `CfgClusterMinPeak`, `CfgMinFrames`.
+`CfgDoubledRefreshes`, `CfgTripleRefreshes`, `CfgBandA`, `CfgBandB`, `CfgBandC`, `CfgBandD`, `CfgZeroScorePct`, `CfgTripleWeight`, `CfgTripleCapGrade`, `CfgTripleCapMinCount`, `CfgTrimStartSeconds`, `CfgTrimEndSeconds`, `CfgClusterWindowSec`, `CfgClusterWeight`, `CfgClusterMaxExcess`, `CfgClusterMinEvents`, `CfgClusterMinPeak`, `CfgMinFrames`.
 
-These store the thresholds the row was graded with. They are constants unless the tool was run with non-default settings or the rules were retuned, so they are rarely worth charting. Use them to check that two rows were graded the same way before comparing them. The values at the time of writing are 1.5 refreshes (doubled), 2.5 (3+), bands 0.1 / 0.4 / 1 / 3, weight 3, cap at C when 2 or more 3+ frames, 5 s tail dropped, 5 s windows, and a 100 frame minimum.
+These store the thresholds the row was graded with. Most are constants unless the tool was run with non-default settings or the rules were retuned, so they are rarely worth charting. Use them to check that two rows were graded the same way before comparing them. The values at the time of writing are 1.5 refreshes (doubled), 2.5 (3+), bands 0.1 / 0.4 / 1 / 3, weight 3, cap at C when 2 or more 3+ frames, 5 s tail dropped, 5 s windows, and a 100 frame minimum.
+
+**Trimmed time at the start and end of a capture.**
+- `CfgTrimStartSeconds` is the warm-up: seconds ignored at the start of the capture. It is the value passed as `--delaystart` (often 30, but it varies by launch script). PresentMon records from the start, and the tool then discards the frames in this window before computing any statistic. It applies to every frame-based column in the row (`PresentMonFrameCount`, FPS, frame time, displayed time, busy and wait, and the grade), so it explains why `PresentMonFrameCount` is smaller than the frames PresentMon actually recorded. The CPU and GPU utilization columns (`CpuAverage`, `GpuAverage` and their min and max) skip the same period as a sample count (`SampleCount`) but are timed by the tool's own clock, not PresentMon's.
+- `CfgTrimEndSeconds` is the tail dropped from the end of the capture, and only for the grade (the game may have exited before the trace finished). It does not affect the other frame statistics.
+- `NULL` in `CfgTrimStartSeconds` means the row predates the column, or it was regraded from a log that did not record the warm-up. Do not assume 30.
+- Runs with different warm-up lengths cover different parts of a table's session (a longer warm-up skips more of the start). Check this column before comparing runs, for example when you compare fresh-start behaviour.
 
 ### Present gap diagnostics (informational)
 
