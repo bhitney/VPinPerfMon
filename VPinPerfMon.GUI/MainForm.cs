@@ -79,6 +79,7 @@ internal sealed class MainForm : Form
 
         // DeleteCSV
         optionsLayout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        _logPathTextBox = new TextBox { Dock = DockStyle.Fill, Text = Path.Combine(AppContext.BaseDirectory, "logs") };
         _deleteCsvCheckBox = new CheckBox { Text = "Keep CSV && Log file", Checked = true, AutoSize = true, Padding = new Padding(0, 4, 0, 4) };
         _deleteCsvCheckBox.CheckedChanged += (_, _) =>
         {
@@ -94,7 +95,6 @@ internal sealed class MainForm : Form
         var logPathPanel = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, AutoSize = true };
         logPathPanel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
         logPathPanel.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
-        _logPathTextBox = new TextBox { Dock = DockStyle.Fill, Text = Path.Combine(AppContext.BaseDirectory, "logs") };
         _logPathTextBox.TextChanged += (_, _) => UpdateCommandLine();
         var browseBtn = new Button { Text = "...", Width = 30, Height = _logPathTextBox.Height };
         browseBtn.Click += (_, _) =>
