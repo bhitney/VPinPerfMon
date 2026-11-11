@@ -30,8 +30,31 @@ internal partial class Program
     [DllImport(NvmlDll, EntryPoint = "nvmlDeviceGetUtilizationRates")]
     public static extern int NvmlDeviceGetUtilizationRates(IntPtr device, out NvmlUtilization utilization);
 
+    [DllImport(NvmlDll, EntryPoint = "nvmlDeviceGetName", CharSet = CharSet.Ansi)]
+    public static extern int NvmlDeviceGetName(IntPtr device, StringBuilder name, uint length);
+
+    [DllImport(NvmlDll, EntryPoint = "nvmlSystemGetDriverVersion", CharSet = CharSet.Ansi)]
+    public static extern int NvmlSystemGetDriverVersion(StringBuilder version, uint length);
+
     [DllImport(NvmlDll, EntryPoint = "nvmlShutdown")]
     public static extern int NvmlShutdown();
+
+    private static (string? Name, string? Driver) ReadNvmlGpuInfo(IntPtr gpuHandle)
+    {
+        string? name = null, driver = null;
+        try
+        {
+            StringBuilder nameBuffer = new(96);
+            if (NvmlDeviceGetName(gpuHandle, nameBuffer, (uint)nameBuffer.Capacity) == 0) name = nameBuffer.ToString();
+            StringBuilder driverBuffer = new(80);
+            if (NvmlSystemGetDriverVersion(driverBuffer, (uint)driverBuffer.Capacity) == 0) driver = driverBuffer.ToString();
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"GPU info unavailable: {ex.Message}");
+        }
+        return (name, driver);
+    }
 
     // --- Console Control (for graceful PresentMon shutdown) ---
     [DllImport("kernel32.dll", SetLastError = true)]
@@ -113,6 +136,8 @@ internal partial class Program
         // Capture context and file pointers (stored in the database)
         public string? SwapChainAddress { get; set; }
         public int SwapChainCount { get; set; }
+            public string? GpuName { get; set; }
+            public string? GpuDriverVersion { get; set; }
         public string? PresentApplication { get; set; }
         public string? PresentMode { get; set; }
         public string? FileAnalysisPath { get; set; }
@@ -169,6 +194,7 @@ internal partial class Program
         // Bottleneck Blame (bottom 1% frames)
         public float? BlameCpuPct { get; set; }  // % of blame attributed to CPU
         public float? BlameGpuPct { get; set; }  // % of blame attributed to GPU
+        public StallBlameResult? StallBlame { get; set; }
 
         // PresentMon Frame Data
         public List<PresentMonFrame> PresentMonFrames { get; } = [];
@@ -343,7 +369,7 @@ internal partial class Program
 
             if (BlameCpuPct.HasValue && BlameGpuPct.HasValue)
             {
-                Console.WriteLine($"Bottleneck Blame (bottom 1% frames):");
+                Console.WriteLine($"Bottleneck Blame (app-caused stalls, weighted by ms over refresh):");
                 Console.WriteLine($"  CPU: {BlameCpuPct.Value:F1}%");
                 Console.WriteLine($"  GPU: {BlameGpuPct.Value:F1}%");
                 Console.WriteLine();
@@ -535,6 +561,22 @@ internal partial class Program
             Param("@SwapChainCount", SwapChainCount > 0 ? SwapChainCount : null);
             Param("@PresentApplication", PresentApplication);
             Param("@PresentMode", PresentMode);
+            Param("@GpuName", GpuName);
+            Param("@GpuDriverVersion", GpuDriverVersion);
+
+            // Bottleneck blame (stall based)
+            var sb = StallBlame;
+            Param("@BlameCpuPct", BlameCpuPct);
+            Param("@BlameGpuPct", BlameGpuPct);
+            Param("@BlameVersion", sb != null ? StallBlameConfig.Version : null);
+            Param("@GpuBusyPctOfRefresh", sb?.GpuBusyPctOfRefresh);
+            Param("@StallCpuCount", sb?.Cpu);
+            Param("@StallGpuCount", sb?.Gpu);
+            Param("@StallModeSwitchCount", sb?.ModeSwitch);
+            Param("@StallAppWaitCount", sb?.AppWait);
+            Param("@StallDisplayCount", sb?.Display);
+            Param("@CfgBlameMinStalls", sb != null ? BlameConfig.MinAttributableStalls : null);
+            Param("@CfgBlameGpuSaturation", sb != null ? BlameConfig.GpuSaturationFraction : null);
             Param("@FileAnalysisPath", FileAnalysisPath);
             Param("@FileRawDataPath", FileRawDataPath);
         }
@@ -578,7 +620,8 @@ internal partial class Program
                         CfgDoubledRefreshes, CfgTripleRefreshes, CfgBandA, CfgBandB, CfgBandC, CfgBandD, CfgZeroScorePct,
                         CfgTripleWeight, CfgTripleCapGrade, CfgClusterWindowSec, CfgClusterWeight, CfgClusterMaxExcess, CfgClusterMinEvents, CfgMinFrames, CfgTripleCapMinCount, CfgTrimEndSeconds, CfgClusterMinPeak, CfgTrimStartSeconds,
                         LongGapCount, LongGapPct, LongGapThresholdMs, LongGapMissCount, LongGapNextDisplayedAvg,
-                        SwapChainAddress, SwapChainCount, PresentApplication, PresentMode,
+                        PresentMode, GpuName, GpuDriverVersion,
+                        StallDisplayCount, CfgBlameMinStalls, CfgBlameGpuSaturation,
                         FileAnalysisPath, FileRawDataPath
                     ) VALUES (
                         @GameId,
@@ -608,7 +651,8 @@ internal partial class Program
                         @CfgDoubledRefreshes, @CfgTripleRefreshes, @CfgBandA, @CfgBandB, @CfgBandC, @CfgBandD, @CfgZeroScorePct,
                         @CfgTripleWeight, @CfgTripleCapGrade, @CfgClusterWindowSec, @CfgClusterWeight, @CfgClusterMaxExcess, @CfgClusterMinEvents, @CfgMinFrames, @CfgTripleCapMinCount, @CfgTrimEndSeconds, @CfgClusterMinPeak, @CfgTrimStartSeconds,
                         @LongGapCount, @LongGapPct, @LongGapThresholdMs, @LongGapMissCount, @LongGapNextDisplayedAvg,
-                        @SwapChainAddress, @SwapChainCount, @PresentApplication, @PresentMode,
+                        @PresentMode, @GpuName, @GpuDriverVersion,
+                        @StallDisplayCount, @CfgBlameMinStalls, @CfgBlameGpuSaturation,
                         @FileAnalysisPath, @FileRawDataPath
                     )";
 
@@ -800,9 +844,7 @@ internal partial class Program
                     command.Parameters.AddWithValue("@StutterScoreDT", DBNull.Value);
                 }
 
-                // Bottleneck Blame
-                command.Parameters.AddWithValue("@BlameCpuPct", (object?)BlameCpuPct ?? DBNull.Value);
-                command.Parameters.AddWithValue("@BlameGpuPct", (object?)BlameGpuPct ?? DBNull.Value);
+                // Bottleneck Blame is bound in AddGradeParameters
 
                 // GPU Busy Stats
                 if (GpuBusyReadings.Count > 0)
@@ -1061,6 +1103,22 @@ internal partial class Program
             {
                 if (float.TryParse(args[i + 1], NumberStyles.Float, CultureInfo.InvariantCulture, out float cw) && cw >= 0)
                     StutterGrading.Config.ClusterWeight = cw;
+                i++;
+            }
+            else if (args[i].Equals("--blame_gpu_saturation", StringComparison.OrdinalIgnoreCase) && i + 1 < args.Length)
+            {
+                if (float.TryParse(args[i + 1], NumberStyles.Float, CultureInfo.InvariantCulture, out float sat) && sat > 0 && sat <= 1.5f)
+                    BlameConfig.GpuSaturationFraction = sat;
+                else
+                    Console.WriteLine($"Warning: Invalid --blame_gpu_saturation '{args[i + 1]}' (need 0-1.5), using default {BlameConfig.GpuSaturationFraction}");
+                i++;
+            }
+            else if (args[i].Equals("--blame_min_stalls", StringComparison.OrdinalIgnoreCase) && i + 1 < args.Length)
+            {
+                if (int.TryParse(args[i + 1], out int minStalls) && minStalls >= 1)
+                    BlameConfig.MinAttributableStalls = minStalls;
+                else
+                    Console.WriteLine($"Warning: Invalid --blame_min_stalls '{args[i + 1]}' (need an integer >= 1), using default {BlameConfig.MinAttributableStalls}");
                 i++;
             }
             else if (args[i].Equals("--sourcefile", StringComparison.OrdinalIgnoreCase) && i + 1 < args.Length)
@@ -1377,7 +1435,7 @@ internal partial class Program
                         StutterScoreFT REAL,
                         StutterScoreDT REAL,
 
-                        -- Bottleneck Blame (bottom 1% frames)
+                        -- Bottleneck Blame (stall based, see BlameVersion)
                         BlameCpuPct REAL,
                         BlameGpuPct REAL,
 
@@ -1473,6 +1531,19 @@ internal partial class Program
                         SwapChainCount INTEGER,
                         PresentApplication TEXT,
                         PresentMode TEXT,
+                        GpuName TEXT,
+                        GpuDriverVersion TEXT,
+
+                        -- Stall-based blame inputs
+                        BlameVersion INTEGER,
+                        GpuBusyPctOfRefresh REAL,
+                        StallCpuCount INTEGER,
+                        StallGpuCount INTEGER,
+                        StallModeSwitchCount INTEGER,
+                        StallAppWaitCount INTEGER,
+                        StallDisplayCount INTEGER,
+                        CfgBlameMinStalls INTEGER,
+                        CfgBlameGpuSaturation REAL,
 
                         -- File pointers (absolute paths)
                         FileAnalysisPath TEXT,
@@ -1658,6 +1729,7 @@ internal partial class Program
             {
                 NvmlDeviceGetHandleByIndex(0, out gpuHandle);
                 gpuAvailable = true;
+                (perfData.GpuName, perfData.GpuDriverVersion) = ReadNvmlGpuInfo(gpuHandle);
                 Console.WriteLine("GPU monitoring initialized successfully.");
             }
             else
@@ -2443,31 +2515,10 @@ internal partial class Program
                     perfData.FrameTimeReadings);
             }
 
-            // Calculate Bottleneck Blame from the bottom 1% of frames by FrameTime
-            var framesWithTiming = perfData.PresentMonFrames
-                .Where(f => f.FrameTime > 0 && f.CPUBusy > 0 && f.GPUBusy > 0)
-                .ToList();
-
-            if (framesWithTiming.Count > 0)
-            {
-                int bottom1PctCount = Math.Max(1, (int)(framesWithTiming.Count * 0.01));
-                var worstFrames = framesWithTiming
-                    .OrderByDescending(f => f.FrameTime)
-                    .Take(bottom1PctCount)
-                    .ToList();
-
-                // Per-frame blame: CPUBusy × GPUWait = CPU starving GPU
-                //                  GPUBusy × CPUWait = GPU starving CPU
-                float totalCpuBlame = worstFrames.Sum(f => f.CPUBusy * f.GPUWait);
-                float totalGpuBlame = worstFrames.Sum(f => f.GPUBusy * f.CPUWait);
-                float totalBlame = totalCpuBlame + totalGpuBlame;
-
-                if (totalBlame > 0)
-                {
-                    perfData.BlameCpuPct = (totalCpuBlame / totalBlame) * 100;
-                    perfData.BlameGpuPct = (totalGpuBlame / totalBlame) * 100;
-                }
-            }
+            // Bottleneck blame: CPU vs GPU share of the stalls the app caused (see StallBlameCalc.cs)
+            perfData.StallBlame = ComputeStallBlame(perfData);
+            perfData.BlameCpuPct = perfData.StallBlame?.CpuPct;
+            perfData.BlameGpuPct = perfData.StallBlame?.GpuPct;
         }
         else
         {

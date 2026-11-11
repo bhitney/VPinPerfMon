@@ -105,10 +105,16 @@ The two scores are **not** required to sum to any fixed total (e.g. 100 or
 
 ### Blame % (`BlameCpuPct` / `BlameGpuPct`)
 
-Computed only from the **worst (bottom) 1% of frames** in the capture, split
-between CPU-side and GPU-side cause. The two always sum to 100%. High
-`BlameGpuPct` means the GPU is the limiting factor on the capture's worst
-frames; high `BlameCpuPct` points at the CPU/driver side instead.
+The CPU-vs-GPU share of the **stalls the app itself caused** (frames shown for
+1.5 refreshes or more), weighted by how many ms each overran the refresh. The
+two always sum to 100%. Present-mode-switch, app-waiting and display/compositor
+stalls are counted separately (`Stall*Count`) and are not blamed on either side.
+Both are `NULL` when there were fewer than `CfgBlameMinStalls` (8) CPU plus GPU
+stalls, which is the normal result for a clean run. Read blame together with
+`GpuBusyPctOfRefresh`, the GPU load: blame says what caused the hitches, load
+says how close the card is to its limit. Rows with `BlameVersion` `NULL` or 1
+use the old worst-1% formula and are not comparable. See
+`DATABASE_COLUMNS.md` for the classification rules.
 
 ### Why most tables cluster near the same FPS
 

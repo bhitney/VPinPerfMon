@@ -27,8 +27,10 @@ One row is written per capture (one table, one play session, one `VPinPerfMon.ex
 | `SwapChainAddress` | Address of the swap chain that was analysed (the playfield). Informational. |
 | `SwapChainCount` | How many swap chains were present in the capture. More than 1 means the tool had to choose (the one with the most frames). Values above 1 mark captures where the selection mattered. |
 | `PresentApplication` | The executable that owns the analysed swap chain, for example `VPinballX64.exe` (VPX 10.8) or `VPinballX_BGFX64.exe` (BGFX). Useful for splitting renderers. |
-| `PresentMode` | How frames reach the display, for example `Hardware: Independent Flip`, `Hardware Composed: Independent Flip` or `Composed: Flip`. Independent flip is the lowest-overhead mode. The most common value for the chain is stored. |
-| `FileAnalysisPath` | Absolute path to the text log of the run. May no longer exist if logs were cleaned up. |
+The most common value for the chain is stored. |
+| `GpuName` | NVIDIA GPU model reported by NVML for GPU index 0, for example `NVIDIA GeForce RTX 5080`. NULL when NVML was unavailable. Rows backfilled with `--regrade` carry the value that was passed with `--gpu_name`, or stay unchanged. |
+| `GpuDriverVersion` | NVIDIA driver version at capture time (or the `--gpu_driver` value for backfilled rows). NULL when NVML was unavailable. |
+| `FileAnalysisPath` |
 | `FileRawDataPath` | Absolute path to the PresentMon CSV of the run. `NULL` when the CSV was deleted at run time. May no longer exist. |
 
 ## Stutter grade (recommended measure)
@@ -149,7 +151,35 @@ Caution: `CpuBusy` plus `CpuWait` is close to `FrameTime`, and a game that waits
 
 ## Bottleneck blame
 
-`BlameCpuPct` and `BlameGpuPct` (0-100, always sum to 100) look only at the worst 1% of frames by `FrameTime`. CPU blame is `CpuBusy * GpuWait` (the CPU was busy while the GPU was starved) and GPU blame is `GpuBusy * CpuWait`. Both are `NULL` when PresentMon gave no CPU and GPU timing. Treat as a rough hint: it has reported extreme values (for example "CPU 97.9%") on runs where wait time is counted as busy, so use it only to compare similar runs.
+Blame answers *"when the game hitched, was the CPU or the GPU responsible?"* It looks only at **stalls**, the frames displayed for `CfgDoubledRefreshes` (1.5) refreshes or more, and ignores smooth frames. `DisplayedTime / GradeRefreshMs` gives the size of a stall. For each stall the stalled frame (`p`) and the next frame (`p+1`) are checked, and the **first** matching rule wins:
+
+1. **CPU:** `max(CPUBusy at p, p+1) >= 1.5 * refresh` and the GPU maximum is not larger.
+2. **GPU:** `max(GPUBusy at p, p+1) >= CfgBlameGpuSaturation * refresh` **and** `max(FrameTime at p, p+1) >= 1.5 * refresh`. The second condition means the app was actually late. Without it, a run whose GPU sits near its limit all the time would label every unexplained stall as GPU.
+3. **Present-mode switch:** `PresentMode` of the previous or next frame differs.
+4. **App waiting / OS:** `FrameTime` of the next frame is at least 1.5 refreshes.
+5. **Display / compositor:** none of the above. The app finished on time and the delay came afterwards.
+
+| Column | Meaning |
+|---|---|
+| `BlameCpuPct`, `BlameGpuPct` | Share of the combined overrun (`DisplayedTime - refresh`, in ms) of the CPU-caused and GPU-caused stalls (rules 1 and 2). They sum to 100. Long stalls count for more than short ones. **`NULL` when `StallCpuCount + StallGpuCount` is below `CfgBlameMinStalls`.** That is the normal result for a clean run, and for a run whose stalls were caused by the display or compositor. It does not mean the timing data was missing. |
+| `StallCpuCount`, `StallGpuCount`, `StallModeSwitchCount`, `StallAppWaitCount`, `StallDisplayCount` | How many stalls fell into each rule. Rules 3 to 5 are not the app's CPU or GPU work, so neither upgrade would help with them. Show these next to blame so a reader can see how many events it rests on. |
+| `GpuBusyPctOfRefresh` | Median `GPUBusy` as a percent of the refresh interval, over the graded frames. This is the most direct *"how close is the graphics card to its limit?"* number and it is defined for nearly every run. |
+| `BlameVersion` | `4` is the current method. `NULL` or `1` means the row still holds the old worst-1% formula, which is **not comparable** (it was misleading when a game limits its own frame rate). Do not mix versions in one chart without a label. |
+| `CfgBlameMinStalls` | Minimum CPU plus GPU stalls for blame to be reported (default 8). |
+| `CfgBlameGpuSaturation` | The `GPUBusy` fraction of a refresh used by rule 2 (default 0.9). |
+
+**Reading blame with GPU load.** The two answer different questions:
+
+| Stalls | `GpuBusyPctOfRefresh` | Likely reading |
+|---|---|---|
+| Many | High (over about 85%) | The GPU is close to its limit. A faster card should help. |
+| Many, mostly CPU-labelled | Low (under about 50%) | The GPU is not the limit and the CPU side is. |
+| Many, mostly mode-switch or display | Any | Neither. Overlays, screen recording or the compositor. A hardware upgrade will not help. |
+| Few | Any | Nothing is limiting. |
+
+A run can have both a busy GPU and CPU-caused hitches. The band edges above are starting points and will move for VR.
+
+Blame is only a hint about hitches. For frame-paced runs (a game that holds each frame to the refresh), `CPUBusy` includes the game's own wait, so never use it to judge load. The stall rules use absolute limits for that reason.
 
 ## Suggested visuals and pitfalls
 

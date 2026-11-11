@@ -225,7 +225,7 @@ Animation Error (ms):
   MAD (Mean Absolute Deviation): 0.284
   RMS (Root Mean Square):        0.412
 
-Bottleneck Blame (bottom 1% frames):
+Bottleneck Blame (app-caused stalls, weighted by ms over refresh):
   CPU: 62.4%
   GPU: 37.6%
 
@@ -299,13 +299,18 @@ VPinPerfMon captures several key frame timing metrics from PresentMon v2:
 - Can be zero in some present modes (e.g., when the compositor doesn't report animation timing). It is shown for information only and is **not part of the grade**: PresentMon measures it against the CPU present time, which does not fit a renderer that simulates to a predicted display time.
 
 **Bottleneck Blame (CPU vs GPU)**
-- Analyzes the **bottom 1% of frames** (worst frame times) to determine whether the CPU or GPU was the primary bottleneck
-- For each slow frame, computes a per-frame blame signal:
-  - **CPU Blame** = `CPUBusy × GPUWait` — when the CPU is busy while the GPU is starved waiting, the CPU is the bottleneck
-  - **GPU Blame** = `GPUBusy × CPUWait` — when the GPU is busy while the CPU is starved waiting, the GPU is the bottleneck
-- The two signals are aggregated into a percentage split (always summing to 100%)
-- Helps answer the question: *"When my worst frames happen, is it the CPU or GPU holding things up?"*
-- Only computed when PresentMon provides CPU/GPU Busy and Wait timing for the captured frames
+- Looks only at the **stalls** (frames displayed for 1.5 refreshes or more, the same frames the stutter grade counts) and asks which of them the app itself caused, and whether the CPU or the GPU was responsible
+- Each stall is classified by the first rule that matches (`refresh` is the grade's refresh interval; the stalled frame and the next frame are both checked):
+  1. **CPU**: CPU Busy reached 1.5 refreshes, and the GPU was not busier
+  2. **GPU**: GPU Busy reached 90% of a refresh (`--blame_gpu_saturation`) **and** the app was late (Frame Time reached 1.5 refreshes)
+  3. **Present-mode switch**: the present mode changed next to the stall
+  4. **App waiting / OS**: the next frame's Frame Time reached 1.5 refreshes
+  5. **Display / compositor**: nothing else matched
+- Only stalls 1 and 2 are blamed. **CPU %** and **GPU %** are the shares of their combined overrun (`DisplayedTime - refresh`, in ms) and always sum to 100%. Longer stalls count for more
+- Both are `NULL` when there are fewer than 8 CPU plus GPU stalls (`--blame_min_stalls`). `NULL` means there was not enough evidence to say, which is the normal result for a run with few or no stalls. It is no longer a sign that timing data was missing
+- The count of stalls per cause, the GPU load (median GPU Busy as a percent of the refresh) and the settings used are stored with the row, so a report can show how much evidence the split rests on
+- **Read it together with GPU load.** Blame answers *"what caused the hitches?"*. GPU load answers *"how close is the graphics card to its limit?"*. A run can have a busy GPU and CPU-caused hitches
+- Older rows (`BlameVersion` `NULL` or 1) used the worst 1% of frames and `CPUBusy x GPUWait`. That formula was misleading when the game limits its own frame rate, and the values are not comparable. Regrade the rows (`--regrade --force --apply`) to recompute them
 
 ### Percentile Metrics
 
@@ -369,6 +374,8 @@ The 0-100 **score** is continuous, so there are no cliffs at a threshold: 0% map
 |--------|---------|---------|
 | `--stutter_bands a,b,c,d` | `0.1,0.4,1,3` | Upper limit, in percent of frames, for grades A, B, C and D (must be ascending) |
 | `--stutter_cluster_weight <x>` | `0.1` | Strength of the burst adjustment. `0` turns it off |
+| `--blame_min_stalls <n>` | `8` | CPU plus GPU stalls needed before blame is reported. Short captures may need a lower value |
+| `--blame_gpu_saturation <x>` | `0.9` | GPU Busy, as a fraction of the refresh, at which a late stall counts as GPU-caused |
 
 The other thresholds (1.5 and 2.5 refreshes, the 3x weight, the cap count, the 5-second tail and window) are defaults in the code (`StutterGradeConfig`). Every run stores the thresholds it was graded with in the database (`Cfg*` columns), so rows stay reproducible after you retune.
 
@@ -484,7 +491,8 @@ sqlite3 PUPDatabase.db < Migrations\001_add_stutter_grade_columns.sql
 
 - Run `001` **once**, and **before** deploying the new VPinPerfMon.exe. It adds nullable columns only, so existing rows are untouched, but SQLite fails with `duplicate column name` if a column already exists.
 - `002_drop_consoleoutput.sql` removes the old `ConsoleOutput` column. Run it only after the new version has been deployed and you have confirmed nothing still writes to that column. It needs SQLite 3.35 or later and cannot be undone.
-- The new version no longer stores console text in the database. With `--logconsole true` it writes a `.txt` file and stores its path in `FileAnalysisPath`. When the CSV is kept (`--deletecsv false`) its path is stored in `FileRawDataPath`.
+- `003_add_gpu_info_columns.sql` adds `GpuName` and `GpuDriverVersion`, `004_add_stall_blame_columns.sql` adds the stall-blame columns, and `005_add_blame_gpu_saturation.sql` adds `CfgBlameGpuSaturation`. They add nullable columns only, and SQLite fails with `duplicate column name` if a column already exists. Run them before `--regrade`, which stops with a list of missing columns if any are absent. Then run `--regrade --force --apply` to recompute blame for old rows, because the old values are not comparable.
+- The new version no longer stores console text in the database.
 
 ### Regrading Past Runs
 
@@ -499,7 +507,8 @@ VPinPerfMon.exe --regrade --apply --sqlitedbpath "C:\vPinball\PinUPSystem\PUPDat
 - **Same settings as the run.** The refresh override, process filter and warm-up are read from the run's `.txt`, so you do not pass them. The grading thresholds are the current defaults.
 - **Safety checks.** The regraded frame count must equal the stored `PresentMonFrameCount` (override with `--allow-mismatch`). The database is backed up (`<db>.bak_<timestamp>`) before any update, and all updates run in one transaction.
 - **Idempotent.** Rows that already have a grade are skipped unless you add `--force`.
-- **What it writes.** The grade and its inputs, the capture context, and the two file paths. The old `StutterScoreFT` and `StutterScoreDT` values are not changed.
+- **What it writes.** The grade and its inputs, the blame and its inputs, the capture context, and the two file paths. The old `StutterScoreFT` and `StutterScoreDT` values are not changed.
+- **GPU model.** Regrade never reads the GPU of the machine it runs on, because that may not be the machine that captured the run. `GpuName` and `GpuDriverVersion` are left unchanged unless you pass `--gpu_name` and `--gpu_driver`, which are then written to every updated row.
 - **Not regradable.** Runs whose CSV was deleted cannot be regraded.
 
 Run it from a console (not a minimized batch launch) and not while a capture is in progress.
@@ -536,10 +545,16 @@ Run it from a console (not a minimized batch launch) and not while a capture is 
 - `--force` - Also regrade rows that already have a grade
 - `--allow-mismatch` - Accept a regraded frame count that differs from the stored one
 - `--limit <n>` - Only process the `n` most recent runs that have a CSV
+- `--gpu_name <name>` - Write this GPU name to every updated row (default: leave `GpuName` unchanged)
+- `--gpu_driver <version>` - Write this driver version to every updated row (default: leave `GpuDriverVersion` unchanged)
 
 ### Stutter Grade Options
 - `--stutter_bands <a,b,c,d>` - Upper limit (percent of frames) for grades A, B, C, D (default: `0.1,0.4,1,3`)
 - `--stutter_cluster_weight <x>` - Strength of the burst adjustment, `0` disables it (default: `0.1`)
+
+### Bottleneck Blame Options
+- `--blame_min_stalls <n>` - CPU plus GPU stalls needed before blame is reported (default: `8`)
+- `--blame_gpu_saturation <x>` - GPU Busy, as a fraction of the refresh, at which a late stall counts as GPU-caused (default: `0.9`)
 
 ### Other
 - `--help`, `-h` - Show help message
@@ -596,13 +611,13 @@ The `CustomPerfStats` table stores one row per run:
 - **Displayed Time Delta**: Avg, Max, 99.9th, 99.5th, 99th, 95th
 - **Animation Error**: MAD, RMS (informational)
 - **Legacy Stutter Scores**: StutterScoreFT, StutterScoreDT (the old weighted scores, still written)
-- **Bottleneck Blame**: BlameCpuPct, BlameGpuPct
+- **Bottleneck Blame**: BlameCpuPct, BlameGpuPct, BlameVersion (`4` = current; `NULL` or 1 = the old worst-1% formula), GpuBusyPctOfRefresh, StallCpuCount, StallGpuCount, StallModeSwitchCount, StallAppWaitCount, StallDisplayCount, CfgBlameMinStalls, CfgBlameGpuSaturation
 - **GPU Busy / GPU Wait / CPU Busy / CPU Wait**: Avg, Min, Max, 99.9th, 99.5th, 99th, 95th
 - **Stutter Grade**: StutterGrade (A-F, `NULL` if not graded), StutterGradeScore, StutterGradeCapped, StutterGradeNote (why it was not graded), StutterGradeVersion (`NULL` on rows graded before the grade existed)
 - **Grade inputs and results**: GradeFrames, GradeMissingFrames, GradeDurationSec, GradeRefreshMs, GradeRefreshSource (`manual` or `auto`), DoubledFrames, TripleFrames, LongestMissRefreshes, MissedFramePct, MissesPerMinute, WeightedMissPct, ClusterPeakMisses, ClusterRatio, ClusterMultiplier, EffectiveMissPct
 - **Grading configuration used**: CfgDoubledRefreshes, CfgTripleRefreshes, CfgBandA-D, CfgZeroScorePct, CfgTripleWeight, CfgTripleCapGrade, CfgTripleCapMinCount, CfgTrimStartSeconds, CfgTrimEndSeconds, CfgClusterWindowSec, CfgClusterWeight, CfgClusterMaxExcess, CfgClusterMinEvents, CfgClusterMinPeak, CfgMinFrames
 - **Present gap diagnostics**: LongGapCount, LongGapPct, LongGapThresholdMs, LongGapMissCount, LongGapNextDisplayedAvg
-- **Capture context**: SwapChainAddress, SwapChainCount, PresentApplication, PresentMode
+- **Capture context**: SwapChainAddress, SwapChainCount, PresentApplication, PresentMode, GpuName, GpuDriverVersion (NVIDIA only, read from NVML)
 - **File pointers**: FileAnalysisPath (console `.txt`), FileRawDataPath (PresentMon `.csv`). These are absolute paths recorded at run time; the files may have been cleaned up since.
 
 Compare old and new scores on graded rows:

@@ -171,6 +171,19 @@
     SwapChainCount INTEGER,
     PresentApplication TEXT,
     PresentMode TEXT,
+    GpuName TEXT,                 -- NVML device name (GPU index 0); NULL when NVML is unavailable
+    GpuDriverVersion TEXT,        -- NVIDIA driver version at capture time
+
+    -- Stall-based blame inputs (BlameVersion 2)
+    BlameVersion INTEGER,         -- NULL/1 = legacy worst-1% formula, 2 = stall based
+    GpuBusyPctOfRefresh REAL,     -- median GPUBusy as % of the refresh interval
+    StallCpuCount INTEGER,        -- stalls classified CPU
+    StallGpuCount INTEGER,        -- stalls classified GPU
+    StallModeSwitchCount INTEGER, -- stalls next to a present-mode change
+    StallAppWaitCount INTEGER,    -- stalls where the app finished the next frame late
+    StallDisplayCount INTEGER,    -- stalls with no app cause (display/compositor)
+    CfgBlameMinStalls INTEGER,    -- CPU+GPU stalls needed before blame is reported
+    CfgBlameGpuSaturation REAL,   -- GPU rule: GPUBusy >= this fraction of the refresh on the stalled/next frame
 
     -- File pointers (absolute paths; files may be cleaned up later)
     FileAnalysisPath TEXT,        -- console output .txt

@@ -18,10 +18,12 @@ internal partial class Program
         "CfgClusterMinEvents", "CfgMinFrames", "CfgTripleCapMinCount", "CfgTrimEndSeconds", "CfgClusterMinPeak", "CfgTrimStartSeconds",
         "LongGapCount", "LongGapPct", "LongGapThresholdMs", "LongGapMissCount", "LongGapNextDisplayedAvg",
         "SwapChainAddress", "SwapChainCount", "PresentApplication", "PresentMode",
+        "BlameCpuPct", "BlameGpuPct", "BlameVersion", "GpuBusyPctOfRefresh", "StallCpuCount", "StallGpuCount",
+        "StallDisplayCount", "CfgBlameMinStalls", "CfgBlameGpuSaturation",
         "FileAnalysisPath", "FileRawDataPath"
     ];
 
-    private sealed record RegradeRow(long Id, int GameId, string? SourceFile, DateTime EntryUtc, int FrameCount, double? OldScoreDT, bool HasGrade);
+    private sealed record RegradeRow(long Id, int GameId, string? SourceFile, DateTime EntryUtc, int FrameCount, double? OldScoreDT, bool HasGrade, double? OldBlameCpu);
 
     private sealed class LogHeader
     {
@@ -79,11 +81,16 @@ internal partial class Program
         string logPath = Directory.GetCurrentDirectory();
         bool apply = false, force = false, allowMismatch = false;
         int limit = 0;
+        string? gpuName = null, gpuDriver = null;
 
         for (int i = 0; i < args.Length; i++)
         {
             if (args[i].Equals("--logpath", StringComparison.OrdinalIgnoreCase) && i + 1 < args.Length)
                 logPath = args[++i].Trim('"');
+            else if (args[i].Equals("--gpu_name", StringComparison.OrdinalIgnoreCase) && i + 1 < args.Length)
+                gpuName = args[++i].Trim('"');
+            else if (args[i].Equals("--gpu_driver", StringComparison.OrdinalIgnoreCase) && i + 1 < args.Length)
+                gpuDriver = args[++i].Trim('"');
             else if (args[i].Equals("--apply", StringComparison.OrdinalIgnoreCase))
                 apply = true;
             else if (args[i].Equals("--force", StringComparison.OrdinalIgnoreCase))
@@ -92,6 +99,16 @@ internal partial class Program
                 allowMismatch = true;
             else if (args[i].Equals("--limit", StringComparison.OrdinalIgnoreCase) && i + 1 < args.Length)
                 int.TryParse(args[++i], out limit);
+            else if (args[i].Equals("--blame_gpu_saturation", StringComparison.OrdinalIgnoreCase) && i + 1 < args.Length)
+            {
+                if (float.TryParse(args[++i], NumberStyles.Float, CultureInfo.InvariantCulture, out float sat) && sat > 0 && sat <= 1.5f)
+                    BlameConfig.GpuSaturationFraction = sat;
+            }
+            else if (args[i].Equals("--blame_min_stalls", StringComparison.OrdinalIgnoreCase) && i + 1 < args.Length)
+            {
+                if (int.TryParse(args[++i], out int minStalls) && minStalls >= 1)
+                    BlameConfig.MinAttributableStalls = minStalls;
+            }
         }
 
         if (!File.Exists(databasePath))
@@ -127,7 +144,7 @@ internal partial class Program
                     while (columns.Read()) existing.Add(columns.GetString(0));
                 }
 
-                string[] missingColumns = GradeColumns.Where(c => !existing.Contains(c)).ToArray();
+                string[] missingColumns = GradeColumns.Concat(["GpuName", "GpuDriverVersion"]).Where(c => !existing.Contains(c)).ToArray();
                 if (missingColumns.Length > 0)
                 {
                     Console.WriteLine($"ERROR: The database is missing {missingColumns.Length} column(s) that --regrade writes: {string.Join(", ", missingColumns)}");
@@ -139,7 +156,7 @@ internal partial class Program
             List<RegradeRow> rows = [];
             using (SqliteCommand select = connection.CreateCommand())
             {
-                select.CommandText = "SELECT Id, GameId, SourceFile, EntryDate, PresentMonFrameCount, StutterScoreDT, StutterGradeVersion FROM CustomPerfStats";
+                select.CommandText = "SELECT Id, GameId, SourceFile, EntryDate, PresentMonFrameCount, StutterScoreDT, StutterGradeVersion, BlameCpuPct FROM CustomPerfStats";
                 using SqliteDataReader reader = select.ExecuteReader();
                 while (reader.Read())
                 {
@@ -154,11 +171,17 @@ internal partial class Program
                         entryUtc,
                         reader.GetInt32(4),
                         reader.IsDBNull(5) ? null : reader.GetDouble(5),
-                        !reader.IsDBNull(6)));
+                        !reader.IsDBNull(6),
+                                                reader.IsDBNull(7) ? null : reader.GetDouble(7)));
                 }
             }
 
             Console.WriteLine($"Database rows: {rows.Count}");
+
+            bool writeGpu = gpuName != null || gpuDriver != null;
+            Console.WriteLine(writeGpu
+                ? $"GPU:        {gpuName} {gpuDriver} (from --gpu_name/--gpu_driver; written to every updated row)"
+                : "GPU:        GpuName/GpuDriverVersion left unchanged (use --gpu_name and --gpu_driver to set them)");
 
             var txtFiles = Directory.EnumerateFiles(logPath, "PresentMon_*.txt")
                 .OrderByDescending(f => Path.GetFileName(f), StringComparer.Ordinal)
@@ -264,7 +287,9 @@ internal partial class Program
                     Hz = header.Hz,
                     SourceFile = header.SourceFile,
                     ProcessFiltered = header.Processes.Count > 0,
-                    DelayStartSeconds = header.DelayStart
+                    DelayStartSeconds = header.DelayStart,
+                    GpuName = gpuName,
+                    GpuDriverVersion = gpuDriver
                 };
 
                 TextWriter originalOut = Console.Out;
@@ -301,6 +326,16 @@ internal partial class Program
                 claimed.Add(row.Id);
                 updates.Add((row, data));
                 Report(apply ? "will update" : "would update", row, data);
+
+                var sb = ComputeStallBlame(data);
+                if (sb != null)
+                {
+                    string F(float? v) => v.HasValue ? v.Value.ToString("F0", CultureInfo.InvariantCulture) : "-";
+                    string oldDom = row.OldBlameCpu.HasValue ? (row.OldBlameCpu >= 50 ? "CPU" : "GPU") : "-";
+                    string newDom = sb.CpuPct.HasValue ? (sb.CpuPct >= 50 ? "CPU" : "GPU") : "-";
+                    Count($"blame old {oldDom} -> new {newDom}");
+                    Console.WriteLine($"        blame old cpu {F((float?)row.OldBlameCpu),3}% | stalls {sb.Stalls,4}: cpu {sb.Cpu} gpu {sb.Gpu} mode {sb.ModeSwitch} appwait {sb.AppWait} display {sb.Display} | new cpu {F(sb.CpuPct),3}% | GPU busy {F(sb.GpuBusyPctOfRefresh)}% of refresh");
+                }
             }
 
             Console.WriteLine();
@@ -330,6 +365,8 @@ internal partial class Program
             Console.WriteLine($"Backup written: {backupPath}");
 
             string setClause = string.Join(", ", GradeColumns.Select(c => $"{c} = @{c}"));
+            if (gpuName != null) setClause += ", GpuName = @GpuName";
+            if (gpuDriver != null) setClause += ", GpuDriverVersion = @GpuDriverVersion";
             using (SqliteTransaction tx = connection.BeginTransaction())
             {
                 int affected = 0;
