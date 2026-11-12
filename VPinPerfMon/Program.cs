@@ -1957,6 +1957,27 @@ internal partial class Program
                 await sampler.StopAsync();
             }
 
+            // Drop the last few CPU/GPU readings (about one per second), like the grade drops its tail,
+            // so the game exiting does not count. The SysStats files are not trimmed.
+            int tailSamples = (int)Math.Round(StutterGrading.Config.TrimEndSeconds);
+            int sampleCountBefore = perfData.CpuReadings.Count;
+            if (tailSamples > 0 && sampleCountBefore > tailSamples)
+            {
+                foreach (List<float> readings in new[] { perfData.CpuReadings, perfData.GpuReadings, perfData.GpuMemoryReadings })
+                {
+                    if (readings.Count > tailSamples)
+                    {
+                        readings.RemoveRange(readings.Count - tailSamples, tailSamples);
+                    }
+                }
+
+                Console.WriteLine($"\nIgnored the last {tailSamples} CPU/GPU samples (exit tail) of {sampleCountBefore}.");
+            }
+            else if (tailSamples > 0)
+            {
+                Console.WriteLine($"\nCPU/GPU tail not trimmed: only {sampleCountBefore} samples (need more than {tailSamples}).");
+            }
+
             Console.WriteLine($"\nMonitoring stopped. CPU/GPU data collection complete ({perfData.CpuReadings.Count} samples).");
 
             // Stop PresentMon and parse results

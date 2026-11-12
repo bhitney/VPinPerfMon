@@ -22,7 +22,7 @@ One row is written per capture (one table, one play session, one `VPinPerfMon.ex
 | `IsVR` | `1` for a VR capture, `0` for desktop. VR and desktop runs should normally be charted separately. |
 | `SourceFile` | Table file name given to the tool (for example `Game of Thrones LE (Stern 2015).vpx`). Fallback for matching when `GameId` is unknown. |
 | `EntryDate` | When the row was written, in UTC. |
-| `SampleCount` | Number of CPU/GPU samples taken, about one per second after warm-up. |
+| `SampleCount` | Number of CPU/GPU samples used for the `Cpu*`, `Gpu*` and `GpuMemory*` columns: about one per second after the warm-up, minus the last `CfgTrimEndSeconds` samples (the exit tail). Rows captured before the tail trim was added include those last seconds, so they are not exactly comparable. |
 | `PresentMonFrameCount` | Number of rendered frames analysed from PresentMon, after the warm-up period and for the selected swap chain only. Use this as the run's frame count. It includes the last few seconds that the grade excludes, so it is slightly larger than `GradeFrames`. |
 | `SwapChainAddress` | Address of the swap chain that was analysed (the playfield). Informational. |
 | `SwapChainCount` | How many swap chains were present in the capture. More than 1 means the tool had to choose (the one with the most frames). Values above 1 mark captures where the selection mattered. |
