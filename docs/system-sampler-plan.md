@@ -48,7 +48,7 @@ Deploy order: run migration 006, then deploy the new exe. The INSERT names the n
 ### Step 1 (done): anchor and schema
 - `Program.cs`: `PerformanceData` gains `CaptureAnchorUtc`, `CaptureAnchorQpcMs`, `TimeBase`. They are read immediately before `presentMonProcess.Start()`, printed to the console (so they land in the `.txt`), and written by `InsertToDatabase`. The inline `--createsql`-style table definition has the same columns.
 - `CreateSqlTable.sql`, `readme.md` and `Reporting/DATABASE_COLUMNS.md` are updated.
-- `TimeBase` is written as `relative` because the capture command is unchanged. It changes to `qpc` in step 4.
+- `TimeBase` is written as `relative` in this step because the capture command was unchanged. Step 4 (below) makes it follow `--timebase`.
 - Capture output is otherwise identical. The PresentMon command and CSV are untouched.
 
 ### Step 2a (done): C# parser reads both time columns
@@ -62,7 +62,7 @@ Deploy order: run migration 006, then deploy the new exe. The INSERT names the n
 
 2. **Parsers in VpinReports and VPinPerfMon** (Python and JS, C# `ParsePresentMonCsv`, `StallBlameCalc.cs`, report JavaScript): detect the header (`CPUStartTime` or `CPUStartQPCTime`) and normalize to seconds since the first frame. Add a QPC fixture to the JS tests. Check the `First frame CPUStartTime` line that the JS parses from the `.txt`, and the warm-up cutoff, because a QPC value is absolute and not near zero.
 3. **Sampler** (`SystemSampler.cs`): 1 Hz, writes `SysStats_<stem>.csv`, `SysProcs_<stem>.csv` (top N or above a CPU threshold, excluding the game, PresentMon and this tool) and optionally `SysEvents_<stem>.csv`. Every row carries `QpcMs` computed as `Stopwatch.GetTimestamp() * 1000.0 / Stopwatch.Frequency`. Counter reads are wrapped so a failure writes blanks instead of aborting a capture. Needs a CLI flag, and a Setup GUI checkbox later.
-4. **Switch the capture command** to `--qpc_time_ms`, update the PresentMon path to 2.6.0, and write `TimeBase = qpc`. Do this only after step 2 is deployed to the reports. Keep the 2.4.1 exe until a capture passes.
+4. **(done, changed from the original plan) `--timebase <qpc|relative>`, default `qpc`.** Decision: the project is bleeding edge, and defaulting to the newest behavior needs the fewest changes to the Popper scripts on the cab. `qpc` adds `--qpc_time_ms` to the PresentMon command and stores `TimeBase = qpc`. `--timebase relative` restores the old behavior (no extra flag, `TimeBase = relative`). All bundled PresentMon versions (2.4.1, 2.5.0, 2.6.0) list `--qpc_time_ms`. Consequence: until VpinReports is updated, the report's CSV drill-down fails on new CSVs, because it requires a `CPUStartTime` column. The Python reports read only the database and are not affected. Keep the CSVs (`--deletecsv false`). Tested with 10 s Chrome captures: default run wrote `CPUStartQPCTime`, the anchor was 0.107 s before the first frame, and `--timebase relative` wrote `CPUStartTime` as before.
 5. **Reports:** correlation lane under the frame timeline, stall tooltip with the top processes, and a more specific diagnosis.
 6. **Phase 2:** ETW deep capture, opt-in, triggered by a detected stall.
 
@@ -78,4 +78,4 @@ Deploy order: run migration 006, then deploy the new exe. The INSERT names the n
 |---|---|
 | Code in `Program.cs` | `git revert` the commit. No data format changes in step 1. |
 | Database columns | Commented `DROP COLUMN` block in migration 006, after deploying an exe that no longer writes them. |
-| Switch to `--qpc_time_ms` (step 4) | Remove the flag to return to `CPUStartTime`. Files already written keep `TimeBase = qpc`, so the parsers must keep handling both. |
+| `--timebase qpc` as the default (step 4) | Pass `--timebase relative` in the cab scripts, or change the default in `Program.cs` (`useQpcTime`). Files already written keep `TimeBase = qpc`, so the parsers must keep handling both. |
