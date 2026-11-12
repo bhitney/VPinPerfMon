@@ -1750,6 +1750,102 @@ internal partial class Program
         });
     }
 
+    /// <summary>
+    /// Stops PresentMon in three steps, logging each one (the log goes to the .txt):
+    /// 1. --terminate_existing_session on our named session, which ends the trace and leaves a complete CSV;
+    /// 2. Ctrl+C, only if step 1 did not work (it does not reach PresentMon when it runs without a console window);
+    /// 3. Kill, as a last resort (the last CSV row can be cut off).
+    /// </summary>
+    private static void StopPresentMon(Process presentMon, string presentMonPath)
+    {
+        Stopwatch watch = Stopwatch.StartNew();
+
+        try
+        {
+            using Process? helper = Process.Start(new ProcessStartInfo
+            {
+                FileName = presentMonPath,
+                Arguments = "--terminate_existing_session",
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true
+            });
+
+            if (helper == null)
+            {
+                Console.WriteLine("PresentMon stop request could not be started.");
+            }
+            else if (helper.WaitForExit(5000))
+            {
+                Console.WriteLine($"PresentMon stop request (--terminate_existing_session): exit code {helper.ExitCode} after {watch.ElapsedMilliseconds} ms.");
+            }
+            else
+            {
+                helper.Kill();
+                Console.WriteLine($"PresentMon stop request did not finish in 5 s and was cancelled.");
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"PresentMon stop request failed: {ex.Message}");
+        }
+
+        if (presentMon.WaitForExit(5000))
+        {
+            Console.WriteLine($"PresentMon exited gracefully after {watch.ElapsedMilliseconds} ms (exit code {presentMon.ExitCode}).");
+            LogPresentMonOutput(presentMon);
+            return;
+        }
+
+        Console.WriteLine($"PresentMon still running after {watch.ElapsedMilliseconds} ms. Trying Ctrl+C.");
+
+        // Ignore Ctrl+C in our process while it is sent to the shared console
+        SetConsoleCtrlHandler(IntPtr.Zero, true);
+        try
+        {
+            bool ctrlCSent = SendCtrlC();
+            if (ctrlCSent && presentMon.WaitForExit(2000))
+            {
+                Console.WriteLine($"PresentMon exited after Ctrl+C, {watch.ElapsedMilliseconds} ms after the stop began (exit code {presentMon.ExitCode}).");
+                LogPresentMonOutput(presentMon);
+                return;
+            }
+        }
+        finally
+        {
+            SetConsoleCtrlHandler(IntPtr.Zero, false);
+        }
+
+        Console.WriteLine($"PresentMon did not respond to Ctrl+C. Killing it after {watch.ElapsedMilliseconds} ms. The last CSV row may be incomplete.");
+        presentMon.Kill();
+        presentMon.WaitForExit(5000);
+        Console.WriteLine($"PresentMon stopped (killed) after {watch.ElapsedMilliseconds} ms.");
+        LogPresentMonOutput(presentMon);
+    }
+
+    /// <summary>Writes anything PresentMon printed (its output is redirected and otherwise never read) to the console log.</summary>
+    private static void LogPresentMonOutput(Process presentMon)
+    {
+        try
+        {
+            foreach ((string label, StreamReader reader) in new[] { ("output", presentMon.StandardOutput), ("error", presentMon.StandardError) })
+            {
+                Task<string> read = reader.ReadToEndAsync();
+                if (!read.Wait(1000)) continue;
+
+                foreach (string line in read.Result.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).Take(8))
+                {
+                    Console.WriteLine($"PresentMon {label}: {line}");
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"PresentMon output could not be read: {ex.Message}");
+        }
+    }
+
     private static bool SendCtrlC()
     {
         try
@@ -1994,38 +2090,12 @@ internal partial class Program
                 {
                     if (!presentMonProcess.HasExited)
                     {
-                        // Ignore Ctrl+C in our process for the entire shutdown sequence
-                        SetConsoleCtrlHandler(IntPtr.Zero, true);
-                        try
-                        {
-                            bool ctrlCSent = SendCtrlC();
-
-                            if (ctrlCSent &&
-                                ((timeout > 0 && presentMonProcess.WaitForExit(5000)) ||
-                                 presentMonProcess.WaitForExit(2000)))
-                            {
-                                Console.WriteLine("PresentMon exited gracefully.");
-                            }
-                            else if (!presentMonProcess.HasExited)
-                            {
-                                presentMonProcess.Kill();
-                                presentMonProcess.WaitForExit(5000);
-                                Console.WriteLine("PresentMon stopped (killed).");
-                            }
-                            else
-                            {
-                                Console.WriteLine("PresentMon exited.");
-                            }
-                        }
-                        finally
-                        {
-                            // Re-enable Ctrl+C handling after PresentMon has exited
-                            SetConsoleCtrlHandler(IntPtr.Zero, false);
-                        }
+                        StopPresentMon(presentMonProcess, presentMonPath!);
                     }
                     else
                     {
-                        Console.WriteLine("PresentMon already exited.");
+                        Console.WriteLine($"PresentMon already exited (exit code {presentMonProcess.ExitCode}).");
+                        LogPresentMonOutput(presentMonProcess);
                     }
                 }
                 catch (Exception ex)
