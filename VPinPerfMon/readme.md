@@ -89,6 +89,7 @@ VPinPerfMon.exe --delaystart 15 --timeout 45 --presentmonpath "C:\Tools\PresentM
 - `--presentmonpath` - Path to PresentMon executable
 - `--process_name` - Target process to monitor (the pinball emulator)
 - `--deletecsv false` - Keep the PresentMon CSV file for inspection
+- `--timebase <qpc|relative>` - Time column in the PresentMon CSV. The default, `qpc`, adds `--qpc_time_ms` so the CSV carries `CPUStartQPCTime` (absolute QPC milliseconds), and `TimeBase` is stored as `qpc`. Use `relative` for PresentMon's default `CPUStartTime` (milliseconds since the trace started) with `TimeBase` stored as `relative`. Report code that reads the CSV by column name needs to handle both.
 
 **Example Output:**
 ```

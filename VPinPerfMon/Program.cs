@@ -1062,6 +1062,7 @@ internal partial class Program
         List<string> processNames = [];
         string? presentMonPath = null;
         string? logPath = null;
+        bool useQpcTime = true;
 
         for (int i = 0; i < args.Length; i++)
         {
@@ -1168,6 +1169,17 @@ internal partial class Program
             else if (args[i].Equals("--logpath", StringComparison.OrdinalIgnoreCase) && i + 1 < args.Length)
             {
                 logPath = args[i + 1].Trim('"');
+                i++;
+            }
+            else if (args[i].Equals("--timebase", StringComparison.OrdinalIgnoreCase) && i + 1 < args.Length)
+            {
+                string timeBaseArg = args[i + 1].Trim('"');
+                if (timeBaseArg.Equals("qpc", StringComparison.OrdinalIgnoreCase))
+                    useQpcTime = true;
+                else if (timeBaseArg.Equals("relative", StringComparison.OrdinalIgnoreCase))
+                    useQpcTime = false;
+                else
+                    Console.WriteLine($"Warning: Invalid --timebase '{timeBaseArg}' (use qpc or relative), using default qpc");
                 i++;
             }
             else if (args[i].Equals("--outputsql", StringComparison.OrdinalIgnoreCase))
@@ -1300,6 +1312,7 @@ internal partial class Program
             hz,
             sourceFile,
             baseFilename,
+            useQpcTime,
             cancellationTokenSource.Token);
 
         // Wait for any task to complete
@@ -1628,6 +1641,9 @@ internal partial class Program
         Console.WriteLine("  --deletecsv <true|false>   Delete CSV after parsing (default: true)");
         Console.WriteLine("  --logconsole <true|false>  Capture console output to a .txt file (path stored in the database) (default: false)");
         Console.WriteLine("  --logpath <directory>      Directory for CSV and log files (default: current directory)");
+        Console.WriteLine("  --timebase <qpc|relative>  Time column in the PresentMon CSV (default: qpc)");
+        Console.WriteLine("                             qpc = CPUStartQPCTime, absolute QPC ms (adds --qpc_time_ms)");
+        Console.WriteLine("                             relative = CPUStartTime, ms since the trace started (PresentMon default)");
         Console.WriteLine();
         Console.WriteLine("Output:");
         Console.WriteLine("  --sqlitedbpath <path>      Path to SQLite database file");
@@ -1729,6 +1745,7 @@ internal partial class Program
         float? hz,
         string? sourceFile,
         string baseFilename,
+        bool useQpcTime,
         CancellationToken cancellationToken)
     {
         PerformanceData perfData = new() { Hz = hz, SourceFile = sourceFile, ProcessFiltered = processNames.Count > 0, DelayStartSeconds = delayStart };
@@ -1777,6 +1794,11 @@ internal partial class Program
 
                 argumentParts.Add("--v2_metrics");
 
+                if (useQpcTime)
+                {
+                    argumentParts.Add("--qpc_time_ms");
+                }
+
                 foreach (string processName in processNames)
                 {
                     argumentParts.Add($"--process_name \"{processName}\"");
@@ -1818,7 +1840,7 @@ internal partial class Program
 
                 perfData.CaptureAnchorUtc = anchorUtc;
                 perfData.CaptureAnchorQpcMs = anchorQpcMs;
-                perfData.TimeBase = "relative";
+                perfData.TimeBase = useQpcTime ? "qpc" : "relative";
                 Console.WriteLine($"Capture anchor UTC: {anchorUtc:o}");
                 Console.WriteLine($"Capture anchor QPC: {anchorQpcMs:F4}ms");
                 Console.WriteLine($"TimeBase: {perfData.TimeBase}");
