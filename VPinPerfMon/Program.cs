@@ -2087,6 +2087,7 @@ internal partial class Program
         double delayStartMs = delayStart * 1000.0; // Convert to milliseconds
         int totalFramesParsed = 0;
         int framesFiltered = 0;
+        int incompleteRows = 0;
         double? firstFrameCpuStartTime = null; // Track the first frame's start time as baseline
         double warmupThreshold = 0.0;
 
@@ -2116,6 +2117,13 @@ internal partial class Program
             while ((line = reader.ReadLine()) != null)
             {
                 var columns = line.Split(',');
+
+                // A row cut off mid-write (PresentMon stopped while writing) has fewer fields than the header.
+                if (columns.Length < headers.Length)
+                {
+                    incompleteRows++;
+                    continue;
+                }
 
                 // Filter by process name if specified
                 if (columnMap.TryGetValue("Application", out int appIndex) && 
@@ -2284,6 +2292,10 @@ internal partial class Program
         if (perfData.PresentMonFrames.Count > 0)
         {
             Console.WriteLine($"Parsed {totalFramesParsed} total frames from PresentMon data.");
+            if (incompleteRows > 0)
+            {
+                Console.WriteLine($"Skipped {incompleteRows} incomplete CSV row(s) (PresentMon was stopped while writing).");
+            }
 
             if (framesFiltered > 0)
             {
