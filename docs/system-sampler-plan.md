@@ -74,6 +74,11 @@ Tests (this machine, Release build, short Chrome captures, 12-15 s):
 - Database: migration 006 applied to a scratch copy of `PUPDatabase.db` (144 to 147 columns, 333 old rows unchanged). A capture with `--outputsql` inserted one row with the anchor columns filled and `TimeBase = qpc`. The 333 older rows have NULL anchors.
 - Not tested: a real game on the cab, a machine without the GPU Engine counters, a non-English Windows install (counter names are localized there, so the category lookups may fail and leave cells empty), and a session started from the Popper front end.
 
+### Warm-up and tail handling
+- Everything is captured. PresentMon records from the start and the tool discards the first `--delaystart` seconds of frames afterwards. The `SysStats_`, `SysProcs_` and `SysEvents_` files are never trimmed, so a report can show the warm-up (and the exit) and shade it.
+- The stored CPU/GPU readings (`CpuAverage` etc.) skip the warm-up by not being stored until `--delaystart` has passed. The counters themselves run during the warm-up. Those readings are also trimmed at the end: the last `TrimEndSeconds` (5) samples are dropped, so the game exiting does not count. This is skipped when a run has 5 samples or fewer. `SampleCount` is the count after trimming. Older rows include the tail.
+- The cutoffs for the system files: warm-up ends at the first frame's `CPUStartQPCTime` plus `delaystart`, and the tail starts `TrimEndSeconds` before the last `SysStats` row. Both are already stored in the database as `CfgTrimStartSeconds` and `CfgTrimEndSeconds`.
+
 ## Remaining steps
 
 2. **Parsers in VpinReports and VPinPerfMon** (Python and JS, C# `ParsePresentMonCsv`, `StallBlameCalc.cs`, report JavaScript): detect the header (`CPUStartTime` or `CPUStartQPCTime`) and normalize to seconds since the first frame. Add a QPC fixture to the JS tests. Check the `First frame CPUStartTime` line that the JS parses from the `.txt`, and the warm-up cutoff, because a QPC value is absolute and not near zero.
