@@ -1063,6 +1063,8 @@ internal partial class Program
         string? presentMonPath = null;
         string? logPath = null;
         bool useQpcTime = true;
+        bool sysStats = true;
+        int sysStatsTop = 5;
 
         for (int i = 0; i < args.Length; i++)
         {
@@ -1169,6 +1171,24 @@ internal partial class Program
             else if (args[i].Equals("--logpath", StringComparison.OrdinalIgnoreCase) && i + 1 < args.Length)
             {
                 logPath = args[i + 1].Trim('"');
+                i++;
+            }
+            else if (args[i].Equals("--sysstats", StringComparison.OrdinalIgnoreCase) && i + 1 < args.Length)
+            {
+                if (!bool.TryParse(args[i + 1].Trim('"'), out sysStats))
+                {
+                    Console.WriteLine($"Warning: Invalid --sysstats '{args[i + 1]}' (use true or false), using default true");
+                    sysStats = true;
+                }
+                i++;
+            }
+            else if (args[i].Equals("--sysstats_top", StringComparison.OrdinalIgnoreCase) && i + 1 < args.Length)
+            {
+                if (!int.TryParse(args[i + 1], out sysStatsTop) || sysStatsTop < 1 || sysStatsTop > 50)
+                {
+                    Console.WriteLine($"Warning: Invalid --sysstats_top '{args[i + 1]}' (need 1-50), using default 5");
+                    sysStatsTop = 5;
+                }
                 i++;
             }
             else if (args[i].Equals("--timebase", StringComparison.OrdinalIgnoreCase) && i + 1 < args.Length)
@@ -1313,6 +1333,8 @@ internal partial class Program
             sourceFile,
             baseFilename,
             useQpcTime,
+            sysStats,
+            sysStatsTop,
             cancellationTokenSource.Token);
 
         // Wait for any task to complete
@@ -1644,6 +1666,8 @@ internal partial class Program
         Console.WriteLine("  --timebase <qpc|relative>  Time column in the PresentMon CSV (default: qpc)");
         Console.WriteLine("                             qpc = CPUStartQPCTime, absolute QPC ms (adds --qpc_time_ms)");
         Console.WriteLine("                             relative = CPUStartTime, ms since the trace started (PresentMon default)");
+        Console.WriteLine("  --sysstats <true|false>    Write 1 Hz system and per-process load next to the CSV: SysStats_, SysProcs_ and SysEvents_ files (default: true)");
+        Console.WriteLine("  --sysstats_top <n>         Busiest processes logged per second, by CPU and by GPU (default: 5)");
         Console.WriteLine();
         Console.WriteLine("Output:");
         Console.WriteLine("  --sqlitedbpath <path>      Path to SQLite database file");
@@ -1746,6 +1770,8 @@ internal partial class Program
         string? sourceFile,
         string baseFilename,
         bool useQpcTime,
+        bool sysStats,
+        int sysStatsTop,
         CancellationToken cancellationToken)
     {
         PerformanceData perfData = new() { Hz = hz, SourceFile = sourceFile, ProcessFiltered = processNames.Count > 0, DelayStartSeconds = delayStart };
@@ -1853,6 +1879,26 @@ internal partial class Program
             }
         }
 
+        SystemSampler? sampler = null;
+        if (sysStats && deleteCsv)
+        {
+            Console.WriteLine("System sampler skipped: --deletecsv true discards the capture files. Use --deletecsv false to keep the SysStats files.");
+        }
+        else if (sysStats)
+        {
+            List<string> excluded = [.. processNames];
+            if (!string.IsNullOrEmpty(presentMonPath))
+            {
+                excluded.Add(Path.GetFileNameWithoutExtension(presentMonPath));
+            }
+
+            sampler = new SystemSampler(baseFilename, sysStatsTop, excluded);
+            if (!sampler.Start())
+            {
+                sampler = null;
+            }
+        }
+
         try
         {
             while (!cancellationToken.IsCancellationRequested)
@@ -1906,6 +1952,11 @@ internal partial class Program
         }
         finally
         {
+            if (sampler != null)
+            {
+                await sampler.StopAsync();
+            }
+
             Console.WriteLine($"\nMonitoring stopped. CPU/GPU data collection complete ({perfData.CpuReadings.Count} samples).");
 
             // Stop PresentMon and parse results
