@@ -192,7 +192,10 @@
 
     -- File pointers (absolute paths; files may be cleaned up later)
     FileAnalysisPath TEXT,        -- console output .txt
-    FileRawDataPath TEXT          -- PresentMon .csv (NULL if deleted at run time)
+    FileRawDataPath TEXT,         -- PresentMon .csv (NULL if deleted at run time)
+
+    -- Name shared by all files of the run (migration 007)
+    FileAssetStem TEXT            -- e.g. 20261112133050_Blue Note (Gottlieb 1979); files are <Prefix>_<stem>.<ext>, no folder
 );
 
 -- Indexes for better query performance

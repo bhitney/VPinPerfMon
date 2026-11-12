@@ -20,7 +20,7 @@ internal partial class Program
         "SwapChainAddress", "SwapChainCount", "PresentApplication", "PresentMode",
         "BlameCpuPct", "BlameGpuPct", "BlameVersion", "GpuBusyPctOfRefresh", "StallCpuCount", "StallGpuCount",
         "StallDisplayCount", "CfgBlameMinStalls", "CfgBlameGpuSaturation",
-        "FileAnalysisPath", "FileRawDataPath"
+        "FileAnalysisPath", "FileRawDataPath", "FileAssetStem"
     ];
 
     private sealed record RegradeRow(long Id, int GameId, string? SourceFile, DateTime EntryUtc, int FrameCount, double? OldScoreDT, bool HasGrade, double? OldBlameCpu);
@@ -323,6 +323,8 @@ internal partial class Program
 
                 data.FileAnalysisPath = Path.GetFullPath(txt);
                 data.FileRawDataPath = Path.GetFullPath(csv);
+                string txtName = Path.GetFileNameWithoutExtension(txt);
+                data.FileAssetStem = txtName.StartsWith("PresentMon_", StringComparison.Ordinal) ? txtName["PresentMon_".Length..] : null;
                 claimed.Add(row.Id);
                 updates.Add((row, data));
                 Report(apply ? "will update" : "would update", row, data);

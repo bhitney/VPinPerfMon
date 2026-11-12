@@ -35,6 +35,7 @@ The most common value for the chain is stored. |
 | `TimeBase` | Which time column the PresentMon CSV carries: `relative` (`CPUStartTime`, ms since the trace started) or `qpc` (`CPUStartQPCTime`, absolute QPC ms). NULL means an old row, treat it as `relative`. |
 | `FileAnalysisPath` |
 | `FileRawDataPath` | Absolute path to the PresentMon CSV of the run. `NULL` when the CSV was deleted at run time. May no longer exist. |
+| `FileAssetStem` | The part of the file names that is the same for every file of the run, for example `20261112133050_Blue Note (Gottlieb 1979)`. It has no folder and no extension, so it works on any device: look in your own copy of the log folder (and its archive) for `<Prefix>_<FileAssetStem>.<extension>`. The files are `PresentMon_<stem>.csv` (frame data), `PresentMon_<stem>.txt` (console log), `SysStats_<stem>.csv`, `SysProcs_<stem>.csv` and `SysEvents_<stem>.csv` (system sampler, newer runs only). Treat it as a plain string, not a glob: game names can contain `[ ] * ?`. Match with the prefix and extension rather than `*_<stem>.*`, because a stem can be the tail of a longer one. Which files exist depends on the run (`--deletecsv true` or `--sysstats false` leave some out). Older rows were filled in from `FileRawDataPath` by migration 007. `NULL` means the stem is not known. |
 
 ## Stutter grade (recommended measure)
 

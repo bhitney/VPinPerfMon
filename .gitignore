@@ -36,3 +36,10 @@ Reporting/**/*.html
 Reporting/**/__pycache__/
 Reporting/**/*.py[cod]
 Reporting/.venv/
+
+# Capture output written by VPinPerfMon when it runs with the repo as the working folder
+/PresentMon_*.csv
+/PresentMon_*.txt
+/SysStats_*.csv
+/SysProcs_*.csv
+/SysEvents_*.csv

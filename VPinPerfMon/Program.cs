@@ -146,6 +146,9 @@ internal partial class Program
         public string? FileAnalysisPath { get; set; }
         public string? FileRawDataPath { get; set; }
 
+        // Name shared by all files of the run: 20261112133050_Blue Note (Gottlieb 1979) in PresentMon_<stem>.csv, SysStats_<stem>.csv, ...
+        public string? FileAssetStem { get; set; }
+
         // Clock anchor taken just before PresentMon is launched: one (UTC, QPC ms) pair on a single instant.
         // QPC ms is Stopwatch.GetTimestamp() converted to milliseconds, the same clock PresentMon's QPC columns use.
         public DateTime? CaptureAnchorUtc { get; set; }
@@ -591,6 +594,7 @@ internal partial class Program
             Param("@TimeBase", TimeBase);
             Param("@FileAnalysisPath", FileAnalysisPath);
             Param("@FileRawDataPath", FileRawDataPath);
+            Param("@FileAssetStem", FileAssetStem);
         }
 
         public void InsertToDatabase(int gameId, int isVR, string databasePath)
@@ -636,7 +640,7 @@ internal partial class Program
                         PresentMode, GpuName, GpuDriverVersion,
                         StallDisplayCount, CfgBlameMinStalls, CfgBlameGpuSaturation,
                         CaptureAnchorUtc, CaptureAnchorQpcMs, TimeBase,
-                        FileAnalysisPath, FileRawDataPath
+                        FileAnalysisPath, FileRawDataPath, FileAssetStem
                     ) VALUES (
                         @GameId,
                         @IsVR,
@@ -669,7 +673,7 @@ internal partial class Program
                         @PresentMode, @GpuName, @GpuDriverVersion,
                         @StallDisplayCount, @CfgBlameMinStalls, @CfgBlameGpuSaturation,
                         @CaptureAnchorUtc, @CaptureAnchorQpcMs, @TimeBase,
-                        @FileAnalysisPath, @FileRawDataPath
+                        @FileAnalysisPath, @FileRawDataPath, @FileAssetStem
                     )";
 
                 // Add parameters
@@ -1314,6 +1318,7 @@ internal partial class Program
                 ? $"_{gameId}"
                 : string.Empty;
         string baseFilename = $"PresentMon_{timestamp}{filenameSuffix}";
+        string fileAssetStem = $"{timestamp}{filenameSuffix}";
         if (!string.IsNullOrEmpty(logPath))
         {
             Directory.CreateDirectory(logPath);
@@ -1353,6 +1358,7 @@ internal partial class Program
         // Insert data directly to database if requested
         if (insertToDb)
         {
+            perfData.FileAssetStem = fileAssetStem;
             // Pointer to the console log that is written below (absolute path)
             if (logConsole && consoleLog != null)
             {
@@ -1603,7 +1609,8 @@ internal partial class Program
 
                         -- File pointers (absolute paths)
                         FileAnalysisPath TEXT,
-                        FileRawDataPath TEXT
+                        FileRawDataPath TEXT,
+                        FileAssetStem TEXT
                     )";
 
                 command.ExecuteNonQuery();

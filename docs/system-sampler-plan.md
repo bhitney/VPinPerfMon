@@ -94,6 +94,15 @@ Tests (this machine, Release build, short Chrome captures, 12-15 s):
 - The termination call is not named by session. I tried `--session_name "VPinPerfMon"` first. In the tool it produced no CSV at all, although the same flag worked when I ran PresentMon directly. I did not find the reason, so I removed it. Consequence: `--terminate_existing_session` ends the default "PresentMon" session, which is the one the tool starts, but it would also end another PresentMon session running at the same time. `--stop_existing_session` at launch already has the same effect.
 - PresentMon prints a warning that without elevation it can list short-running or other-account processes as `<unknown>`, which cannot be targeted by `--process_name` or trigger `--terminate_on_proc_exit`. The cab captures frames, so it is not blocking.
 
+### File assets: `FileAssetStem` (migration 007)
+- Decision: one column holding the name stem shared by all files of a run (`20261112133050_Blue Note (Gottlieb 1979)`), instead of one path column per file. No folder column, so a report on another device uses its own log folder. A plain string, not a glob, because game names can contain `[ ] * ?`. The reader matches `<Prefix>_<stem>.<extension>` with the known prefixes (`PresentMon_`, `SysStats_`, `SysProcs_`, `SysEvents_`) and not `*_<stem>.*`, since a short stem can be the tail of a longer one. Which files exist depends on the run, and the `.txt` records whether the sampler ran.
+- `FileAnalysisPath` and `FileRawDataPath` are unchanged. The plan is to remove them later, once the reports no longer read them.
+- New runs: the stem is built in the same place as `baseFilename` (`timestamp` + game suffix), so it cannot drift from the file names.
+- Existing rows: migration 007 backfills the stem from `FileRawDataPath`. On a copy of the cab database (337 rows) every stem rebuilt both the real `.csv` and `.txt` name, none contained a backslash, and none was shared by two rows. The migration's rollback (`DROP COLUMN`) also ran cleanly on the copy.
+- `--regrade` also sets the stem from the `.txt` name it matches, so a NULL stem is repaired by `--regrade --force --apply`.
+- Tests: a run with the game name `Test [Game] (2026).vpx` stored `20261112160612_Test [Game] (2026)` and the files rebuilt from it exist. With a stem cleared on row 1597 of a copy, a forced regrade restored it (the frame count check needed `--allow-mismatch`: the stored 4,346 was from before the truncated-row fix, the parser now gives 4,345).
+- Not tested: a run without `--logconsole`, which writes no `.txt`. The stem is still stored, and the `.csv` name rebuilds from it.
+
 ## Remaining steps
 
 2. **Parsers in VpinReports and VPinPerfMon** (Python and JS, C# `ParsePresentMonCsv`, `StallBlameCalc.cs`, report JavaScript): detect the header (`CPUStartTime` or `CPUStartQPCTime`) and normalize to seconds since the first frame. Add a QPC fixture to the JS tests. Check the `First frame CPUStartTime` line that the JS parses from the `.txt`, and the warm-up cutoff, because a QPC value is absolute and not near zero.
