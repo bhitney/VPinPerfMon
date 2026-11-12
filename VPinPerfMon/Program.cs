@@ -1863,6 +1863,11 @@ internal partial class Program
                 DateTime anchorUtc = DateTime.UtcNow;
                 double anchorQpcMs = Stopwatch.GetTimestamp() * 1000.0 / Stopwatch.Frequency;
 
+                // The CPU/GPU warm-up is counted from the PresentMon launch (the anchor), like the frame warm-up,
+                // not from the start of this method, which also covers NVML and counter setup.
+                Console.WriteLine($"Setup before PresentMon launch: {monitoringTimer.Elapsed.TotalSeconds:F2}s");
+                monitoringTimer.Restart();
+
                 presentMonProcess.Start();
                 Console.WriteLine($"PresentMon started successfully.");
 

@@ -17,7 +17,8 @@ namespace VPinPerfMon;
 internal sealed class SystemSampler
 {
     private const string GpuEngineCounter = "Utilization Percentage";
-    private const double ReportThresholdPct = 1.0;
+    private const double CpuReportThresholdPct = 1.0;
+    private const double GpuReportThresholdPct = 2.0;
     private static readonly TimeSpan Interval = TimeSpan.FromSeconds(1);
 
     private static readonly Regex GpuInstanceRegex = new(
@@ -305,8 +306,8 @@ internal sealed class SystemSampler
                 _lastForeground = foreground;
             }
 
-            IEnumerable<ProcessRow> selected = candidates.Where(p => p.CpuPct >= ReportThresholdPct).OrderByDescending(p => p.CpuPct).Take(_topN)
-                .Concat(candidates.Where(p => p.GpuPct >= ReportThresholdPct).OrderByDescending(p => p.GpuPct).Take(_topN))
+            IEnumerable<ProcessRow> selected = candidates.Where(p => p.CpuPct >= CpuReportThresholdPct).OrderByDescending(p => p.CpuPct).Take(_topN)
+                .Concat(candidates.Where(p => p.GpuPct >= GpuReportThresholdPct).OrderByDescending(p => p.GpuPct).Take(_topN))
                 .DistinctBy(p => p.Pid);
             foreach (ProcessRow row in selected)
             {

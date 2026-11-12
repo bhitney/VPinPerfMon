@@ -92,7 +92,7 @@ VPinPerfMon.exe --delaystart 15 --timeout 45 --presentmonpath "C:\Tools\PresentM
 Report code that reads the CSV by column name needs to handle both.
 - `--sysstats <true|false>` - Write a 1 Hz system and per-process load log next to the PresentMon CSV (default `true`). It is skipped when `--deletecsv true`, because it only makes sense with the capture files kept. Files, named with the same timestamp and game as the CSV:
   - `SysStats_<stem>.csv`: one row per second with `QpcMs`, `UtcTime`, total and busiest-core CPU %, DPC %, interrupt %, context switches/sec, disk bytes/sec and queue, available memory, pages input/sec, GPU engine %, the foreground process, and `SampleMs` (how long reading the counters took).
-  - `SysProcs_<stem>.csv`: the busiest processes each second (by CPU and by GPU, at least 1%), with `QpcMs`, PID, name, CPU %, GPU %, working set MB and IO bytes/sec. CPU % is a share of the whole machine (all cores), like the Task Manager Processes tab. The game, PresentMon and VPinPerfMon are left out.
+  the busiest processes each second (by CPU, at least 1%, and by GPU, at least 2%)
   - `SysEvents_<stem>.csv`: foreground window changes and process start/exit, with `QpcMs`.
   - `QpcMs` is the same clock as the PresentMon `CPUStartQPCTime` column (`--timebase qpc`). Rate values are averages over the second before `QpcMs`. A counter that is not available on the machine leaves its cells empty and does not stop the capture. No administrator rights are needed.
 - `--sysstats_top <n>` - How many processes to log each second, by CPU and by GPU (default 5, range 1-50).
