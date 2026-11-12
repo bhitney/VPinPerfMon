@@ -1071,6 +1071,7 @@ internal partial class Program
         bool useQpcTime = true;
         bool sysStats = true;
         int sysStatsTop = 5;
+        ThreadPriority sysStatsPriority = ThreadPriority.Normal;
 
         for (int i = 0; i < args.Length; i++)
         {
@@ -1195,6 +1196,19 @@ internal partial class Program
                     Console.WriteLine($"Warning: Invalid --sysstats_top '{args[i + 1]}' (need 1-50), using default 5");
                     sysStatsTop = 5;
                 }
+                i++;
+            }
+            else if (args[i].Equals("--sysstats_priority", StringComparison.OrdinalIgnoreCase) && i + 1 < args.Length)
+            {
+                string priorityArg = args[i + 1].Trim('"');
+                if (priorityArg.Equals("normal", StringComparison.OrdinalIgnoreCase))
+                    sysStatsPriority = ThreadPriority.Normal;
+                else if (priorityArg.Equals("belownormal", StringComparison.OrdinalIgnoreCase))
+                    sysStatsPriority = ThreadPriority.BelowNormal;
+                else if (priorityArg.Equals("lowest", StringComparison.OrdinalIgnoreCase))
+                    sysStatsPriority = ThreadPriority.Lowest;
+                else
+                    Console.WriteLine($"Warning: Invalid --sysstats_priority '{priorityArg}' (use normal, belownormal or lowest), using default normal");
                 i++;
             }
             else if (args[i].Equals("--timebase", StringComparison.OrdinalIgnoreCase) && i + 1 < args.Length)
@@ -1342,6 +1356,7 @@ internal partial class Program
             useQpcTime,
             sysStats,
             sysStatsTop,
+            sysStatsPriority,
             cancellationTokenSource.Token);
 
         // Wait for any task to complete
@@ -1677,6 +1692,7 @@ internal partial class Program
         Console.WriteLine("                             relative = CPUStartTime, ms since the trace started (PresentMon default)");
         Console.WriteLine("  --sysstats <true|false>    Write 1 Hz system and per-process load next to the CSV: SysStats_, SysProcs_ and SysEvents_ files (default: true)");
         Console.WriteLine("  --sysstats_top <n>         Busiest processes logged per second, by CPU and by GPU (default: 5)");
+        Console.WriteLine("  --sysstats_priority <p>    Priority of the sampler thread: normal, belownormal or lowest (default: normal)");
         Console.WriteLine();
         Console.WriteLine("Output:");
         Console.WriteLine("  --sqlitedbpath <path>      Path to SQLite database file");
@@ -1877,6 +1893,7 @@ internal partial class Program
         bool useQpcTime,
         bool sysStats,
         int sysStatsTop,
+        ThreadPriority sysStatsPriority,
         CancellationToken cancellationToken)
     {
         PerformanceData perfData = new() { Hz = hz, SourceFile = sourceFile, ProcessFiltered = processNames.Count > 0, DelayStartSeconds = delayStart };
@@ -2002,7 +2019,7 @@ internal partial class Program
                 excluded.Add(Path.GetFileNameWithoutExtension(presentMonPath));
             }
 
-            sampler = new SystemSampler(baseFilename, sysStatsTop, excluded);
+            sampler = new SystemSampler(baseFilename, sysStatsTop, excluded, sysStatsPriority);
             if (!sampler.Start())
             {
                 sampler = null;

@@ -31,6 +31,12 @@ internal sealed class SystemSampler
     [DllImport("user32.dll")]
     private static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
 
+    [DllImport("kernel32.dll")]
+    private static extern IntPtr GetCurrentThread();
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool GetThreadTimes(IntPtr thread, out long creationTime, out long exitTime, out long kernelTime, out long userTime);
+
     private readonly object _gate = new();
     private readonly CancellationTokenSource _cts = new();
     private readonly string _statsPath;
@@ -44,7 +50,8 @@ internal sealed class SystemSampler
     private StreamWriter? _stats;
     private StreamWriter? _procs;
     private StreamWriter? _events;
-    private Task? _task;
+    private Thread? _thread;
+    private readonly ThreadPriority _priority;
 
     private CategoryReader? _processorReader;
     private CategoryReader? _processReader;
@@ -63,10 +70,15 @@ internal sealed class SystemSampler
     private int _samples;
     private double _sumMs;
     private double _maxMs;
+    private double _sumCpuMs;
+    private double _maxCpuMs;
+    private double _sumReadMs;
+    private double _sumComputeMs;
     private bool _tickErrorReported;
 
-    public SystemSampler(string baseFilename, int topN, IEnumerable<string> excludedProcessNames)
+    public SystemSampler(string baseFilename, int topN, IEnumerable<string> excludedProcessNames, ThreadPriority priority = ThreadPriority.Normal)
     {
+        _priority = priority;
         const string prefix = "PresentMon_";
         string directory = Path.GetDirectoryName(baseFilename) ?? string.Empty;
         string stem = Path.GetFileName(baseFilename);
@@ -90,7 +102,7 @@ internal sealed class SystemSampler
     {
         try
         {
-            _stats = OpenWriter(_statsPath, "QpcMs,UtcTime,CpuTotalPct,CpuMaxCorePct,DpcPct,InterruptPct,CtxSwitchesPerSec,DiskBytesPerSec,DiskQueue,MemAvailMB,PagesInputPerSec,GpuTotalPct,ForegroundProcess,SampleMs");
+            _stats = OpenWriter(_statsPath, "QpcMs,UtcTime,CpuTotalPct,CpuMaxCorePct,DpcPct,InterruptPct,CtxSwitchesPerSec,DiskBytesPerSec,DiskQueue,MemAvailMB,PagesInputPerSec,GpuTotalPct,ForegroundProcess,SampleMs,SampleCpuMs,ReadMs,ComputeMs");
             _procs = OpenWriter(_procsPath, "QpcMs,Pid,ProcessName,CpuPct,GpuPct,WorkingSetMB,IoBytesPerSec");
             _events = OpenWriter(_eventsPath, "QpcMs,Event,ProcessName,Pid");
 
@@ -114,6 +126,7 @@ internal sealed class SystemSampler
             _pidNames = _prevProcess != null ? BuildPidNames(_prevProcess) : null;
 
             Console.WriteLine("System sampler started (1 Hz).");
+            Console.WriteLine($"System sampler thread priority: {_priority}");
             Console.WriteLine($"System stats: {Path.GetFullPath(_statsPath)}");
             Console.WriteLine($"System processes: {Path.GetFullPath(_procsPath)}");
             Console.WriteLine($"System events: {Path.GetFullPath(_eventsPath)}");
@@ -122,7 +135,8 @@ internal sealed class SystemSampler
                 Console.WriteLine($"System sampler: counters unavailable (cells left empty): {string.Join(", ", unavailable)}");
             }
 
-            _task = Task.Run(() => RunAsync(_cts.Token));
+            _thread = new Thread(() => RunLoop(_cts.Token)) { IsBackground = true, Name = "VPinPerfMon sampler", Priority = _priority };
+            _thread.Start();
             return true;
         }
         catch (Exception ex)
@@ -136,16 +150,10 @@ internal sealed class SystemSampler
     public async Task StopAsync()
     {
         _cts.Cancel();
-        if (_task != null)
+        if (_thread != null)
         {
-            try
-            {
-                await _task.WaitAsync(TimeSpan.FromSeconds(3));
-            }
-            catch (Exception)
-            {
-                // A tick that overruns is abandoned; the writers are closed under the same lock below.
-            }
+            // A tick that overruns is abandoned after 3 s; the writers are closed under the same lock below.
+            await Task.Run(() => _thread.Join(TimeSpan.FromSeconds(3)));
         }
 
         CloseAll();
@@ -153,7 +161,9 @@ internal sealed class SystemSampler
 
         if (_samples > 0)
         {
-            Console.WriteLine($"System sampler stopped: {_samples} samples, {_sumMs / _samples:F1} ms average and {_maxMs:F1} ms maximum spent reading counters per sample.");
+            Console.WriteLine($"System sampler stopped: {_samples} samples, {_sumMs / _samples:F1} ms average and {_maxMs:F1} ms maximum elapsed per sample; " +
+                $"{_sumCpuMs / _samples:F1} ms average and {_maxCpuMs:F1} ms maximum of that was the sampler's own CPU time; " +
+                $"{_sumReadMs / _samples:F1} ms average reading counters, {_sumComputeMs / _samples:F1} ms average computing rates and processes.");
         }
         else
         {
@@ -161,31 +171,46 @@ internal sealed class SystemSampler
         }
     }
 
-    private async Task RunAsync(CancellationToken cancellationToken)
+    private void RunLoop(CancellationToken cancellationToken)
     {
-        using PeriodicTimer timer = new(Interval);
-        try
+        // A fixed 1 s schedule that does not pile up ticks when one runs late (a late tick is skipped, not queued).
+        long period = Stopwatch.Frequency;
+        long next = Stopwatch.GetTimestamp() + period;
+        while (!cancellationToken.IsCancellationRequested)
         {
-            while (await timer.WaitForNextTickAsync(cancellationToken))
+            long wait = next - Stopwatch.GetTimestamp();
+            if (wait > 0 && cancellationToken.WaitHandle.WaitOne(TimeSpan.FromSeconds((double)wait / Stopwatch.Frequency)))
             {
-                try
+                break;
+            }
+
+            try
+            {
+                Tick();
+            }
+            catch (Exception ex)
+            {
+                if (!_tickErrorReported)
                 {
-                    Tick();
-                }
-                catch (Exception ex)
-                {
-                    if (!_tickErrorReported)
-                    {
-                        _tickErrorReported = true;
-                        Console.WriteLine($"System sampler sample error (further errors are not shown): {ex.Message}");
-                    }
+                    _tickErrorReported = true;
+                    Console.WriteLine($"System sampler sample error (further errors are not shown): {ex.Message}");
                 }
             }
+
+            next += period;
+            long now = Stopwatch.GetTimestamp();
+            if (next < now)
+            {
+                // Missed one or more ticks: continue on the next whole second instead of firing them back to back.
+                next += ((now - next) / period + 1) * period;
+            }
         }
-        catch (OperationCanceledException)
-        {
-            // Normal stop.
-        }
+    }
+
+    private static double ThreadCpuMs()
+    {
+        // Kernel plus user time of the calling thread, in 100 ns units.
+        return GetThreadTimes(GetCurrentThread(), out _, out _, out long kernel, out long user) ? (kernel + user) / 10000.0 : 0.0;
     }
 
     private void Tick()
@@ -194,6 +219,8 @@ internal sealed class SystemSampler
         {
             if (_stats == null || _procs == null || _events == null) return;
 
+            double cpuBefore = ThreadCpuMs();
+
             long startTimestamp = Stopwatch.GetTimestamp();
             double qpcMs = startTimestamp * 1000.0 / Stopwatch.Frequency;
             string utc = DateTime.UtcNow.ToString("o", CultureInfo.InvariantCulture);
@@ -201,6 +228,7 @@ internal sealed class SystemSampler
             Snapshot? processor = _processorReader?.Read();
             Snapshot? process = _processReader?.Read();
             Snapshot? gpu = _gpuReader?.Read();
+            double readMs = (Stopwatch.GetTimestamp() - startTimestamp) * 1000.0 / Stopwatch.Frequency;
 
             // System-wide load
             double? cpuTotal = Rate(_prevProcessor, processor, "% Processor Time", "_Total");
@@ -285,6 +313,8 @@ internal sealed class SystemSampler
             }
 
             double sampleMs = (Stopwatch.GetTimestamp() - startTimestamp) * 1000.0 / Stopwatch.Frequency;
+            double cpuMs = ThreadCpuMs() - cpuBefore;
+            double computeMs = sampleMs - readMs;
 
             // Write
             if (pidNames != null && _pidNames != null)
@@ -319,7 +349,7 @@ internal sealed class SystemSampler
             _stats.WriteLine(string.Join(',',
                 Format(qpcMs, "F4"), utc, Format(cpuTotal), Format(maxCore), Format(dpc), Format(interrupt),
                 Format(contextSwitches, "F0"), Format(diskBytes, "F0"), Format(diskQueue), Format(memAvailable, "F0"),
-                Format(pagesInput, "F1"), Format(gpuTotal), Csv(foreground), Format(sampleMs, "F1")));
+                Format(pagesInput, "F1"), Format(gpuTotal), Csv(foreground), Format(sampleMs, "F1"), Format(cpuMs, "F1"), Format(readMs, "F1"), Format(computeMs, "F1")));
 
             _stats.Flush();
             _procs.Flush();
@@ -333,6 +363,10 @@ internal sealed class SystemSampler
             _samples++;
             _sumMs += sampleMs;
             _maxMs = Math.Max(_maxMs, sampleMs);
+            _sumCpuMs += cpuMs;
+            _maxCpuMs = Math.Max(_maxCpuMs, cpuMs);
+            _sumReadMs += readMs;
+            _sumComputeMs += computeMs;
         }
     }
 

@@ -103,6 +103,16 @@ Tests (this machine, Release build, short Chrome captures, 12-15 s):
 - Tests: a run with the game name `Test [Game] (2026).vpx` stored `20261112160612_Test [Game] (2026)` and the files rebuilt from it exist. With a stem cleared on row 1597 of a copy, a forced regrade restored it (the frame count check needed `--allow-mismatch`: the stored 4,346 was from before the truncated-row fix, the parser now gives 4,345).
 - Not tested: a run without `--logconsole`, which writes no `.txt`. The stem is still stored, and the `.csv` name rebuilds from it.
 
+### Sampler cost under load (Twilight Zone run, then local tests)
+- On the cab, with `ffmpeg` encoding, `SampleMs` rose from 3.3 ms (calm) to 184 ms average and 508 ms maximum, but the frames showed no effect (p99 FrameTime 7.38 ms under load and 7.40 ms calm).
+- Change: the sampler now runs on its own thread with a fixed 1 s schedule (a late tick is skipped, not queued) and logs `SampleCpuMs` (thread CPU time), `ReadMs` and `ComputeMs` next to `SampleMs`. New option `--sysstats_priority normal|belownormal|lowest`, default `normal`. It sets the sampler thread's priority only, because lowering the whole process would also lower PresentMon.
+- Local test: 40 s captures of Phosphor with an all-core PowerShell burner (20 cores) from 8 s to 39 s, old build vs new build vs lower priorities. Machine CPU averaged 79% in the first two runs, 71% in below-normal and 45% in lowest, so the load was not identical.
+  - Elapsed time per sample under load: old 171 ms average (595 max), new 178 (538 max). Moving to a dedicated thread did not change it.
+  - The sampler's own CPU time was about 43-48 ms per sample under load, against 21-25 ms in the first seconds. Most of the elapsed time is waiting: reading counters took 166-210 ms of it and computing took 12 ms. So the cost is scheduling delay, not work. `SampleCpuMs` only has 15.6 ms resolution.
+  - Lowering the priority made it worse. Below normal: 768 ms average, 2.4 s maximum, 29 rows instead of 39, gaps up to 4.3 s. Lowest: 4.1 s average, 10 s maximum, 15 rows, gaps up to 11 s. The sampler loses samples exactly when the machine is busiest. Keep the default at `normal`.
+  - Frames (Phosphor, 72 Hz, 22 s under load): frames at 1.5x the median DisplayedTime or more were 0.51% with the sampler off, 1.49% old, 1.20% new, 0.35% below normal, 0.79% lowest. One run each, not monotonic with priority, and the load was not identical, so this does not show the sampler hurting or not hurting the target.
+  - Not measured: which counter category (Processor, Process, GPU Engine) takes the time. Not done: reducing the reads. Not tested: a game near its frame budget.
+
 ## Remaining steps
 
 2. **Parsers in VpinReports and VPinPerfMon** (Python and JS, C# `ParsePresentMonCsv`, `StallBlameCalc.cs`, report JavaScript): detect the header (`CPUStartTime` or `CPUStartQPCTime`) and normalize to seconds since the first frame. Add a QPC fixture to the JS tests. Check the `First frame CPUStartTime` line that the JS parses from the `.txt`, and the warm-up cutoff, because a QPC value is absolute and not near zero.

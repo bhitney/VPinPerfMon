@@ -91,11 +91,12 @@ VPinPerfMon.exe --delaystart 15 --timeout 45 --presentmonpath "C:\Tools\PresentM
 - `--deletecsv false` - Keep the PresentMon CSV file for inspection
 Report code that reads the CSV by column name needs to handle both.
 - `--sysstats <true|false>` - Write a 1 Hz system and per-process load log next to the PresentMon CSV (default `true`). It is skipped when `--deletecsv true`, because it only makes sense with the capture files kept. Files, named with the same timestamp and game as the CSV:
-  - `SysStats_<stem>.csv`: one row per second with `QpcMs`, `UtcTime`, total and busiest-core CPU %, DPC %, interrupt %, context switches/sec, disk bytes/sec and queue, available memory, pages input/sec, GPU engine %, the foreground process, and `SampleMs` (how long reading the counters took).
+  and `SampleMs` (elapsed time of the sample, including time spent waiting for a CPU), `SampleCpuMs` (the sampler thread's own CPU time, in steps of about 15.6 ms, so look at averages, not single values), `ReadMs` (part of `SampleMs` spent reading the counters) and `ComputeMs` (the rest)
   the busiest processes each second (by CPU, at least 1%, and by GPU, at least 2%)
   - `SysEvents_<stem>.csv`: foreground window changes and process start/exit, with `QpcMs`.
   - `QpcMs` is the same clock as the PresentMon `CPUStartQPCTime` column (`--timebase qpc`). Rate values are averages over the second before `QpcMs`. A counter that is not available on the machine leaves its cells empty and does not stop the capture. No administrator rights are needed.
 - `--sysstats_top <n>` - How many processes to log each second, by CPU and by GPU (default 5, range 1-50).
+- `--sysstats_priority <normal|belownormal|lowest>` - Priority of the sampler thread (default `normal`). Lowering it makes the sampler skip seconds when the machine is busy, so leave it at `normal` unless you are testing.
 
 **Example Output:**
 ```
