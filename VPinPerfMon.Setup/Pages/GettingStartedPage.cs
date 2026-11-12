@@ -132,8 +132,8 @@ internal sealed class GettingStartedPage : WizardPage
         var installDir = AppContext.BaseDirectory.TrimEnd('\\');
 
         // Find PresentMon exe name in app directory (or fall back to default)
-        string presentMonName = "PresentMon-2.4.1-x64.exe";
-        var found = Directory.GetFiles(installDir, "PresentMon*.exe").FirstOrDefault();
+        string presentMonName = "PresentMon-2.6.0-x64.exe";
+        var found = Directory.GetFiles(installDir, "PresentMon*.exe").OrderByDescending(Path.GetFileName).FirstOrDefault();
         if (found != null)
             presentMonName = Path.GetFileName(found);
 

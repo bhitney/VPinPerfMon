@@ -146,6 +146,12 @@ internal partial class Program
         public string? FileAnalysisPath { get; set; }
         public string? FileRawDataPath { get; set; }
 
+        // Clock anchor taken just before PresentMon is launched: one (UTC, QPC ms) pair on a single instant.
+        // QPC ms is Stopwatch.GetTimestamp() converted to milliseconds, the same clock PresentMon's QPC columns use.
+        public DateTime? CaptureAnchorUtc { get; set; }
+        public double? CaptureAnchorQpcMs { get; set; }
+        public string? TimeBase { get; set; }
+
         // Warm-up seconds ignored at the start of the capture (--delaystart)
         public int? DelayStartSeconds { get; set; }
 
@@ -580,6 +586,9 @@ internal partial class Program
             Param("@StallDisplayCount", sb?.Display);
             Param("@CfgBlameMinStalls", sb != null ? BlameConfig.MinAttributableStalls : null);
             Param("@CfgBlameGpuSaturation", sb != null ? BlameConfig.GpuSaturationFraction : null);
+            Param("@CaptureAnchorUtc", CaptureAnchorUtc?.ToString("o"));
+            Param("@CaptureAnchorQpcMs", CaptureAnchorQpcMs);
+            Param("@TimeBase", TimeBase);
             Param("@FileAnalysisPath", FileAnalysisPath);
             Param("@FileRawDataPath", FileRawDataPath);
         }
@@ -625,6 +634,7 @@ internal partial class Program
                         LongGapCount, LongGapPct, LongGapThresholdMs, LongGapMissCount, LongGapNextDisplayedAvg,
                         PresentMode, GpuName, GpuDriverVersion,
                         StallDisplayCount, CfgBlameMinStalls, CfgBlameGpuSaturation,
+                        CaptureAnchorUtc, CaptureAnchorQpcMs, TimeBase,
                         FileAnalysisPath, FileRawDataPath
                     ) VALUES (
                         @GameId,
@@ -656,6 +666,7 @@ internal partial class Program
                         @LongGapCount, @LongGapPct, @LongGapThresholdMs, @LongGapMissCount, @LongGapNextDisplayedAvg,
                         @PresentMode, @GpuName, @GpuDriverVersion,
                         @StallDisplayCount, @CfgBlameMinStalls, @CfgBlameGpuSaturation,
+                        @CaptureAnchorUtc, @CaptureAnchorQpcMs, @TimeBase,
                         @FileAnalysisPath, @FileRawDataPath
                     )";
 
@@ -1548,6 +1559,11 @@ internal partial class Program
                         CfgBlameMinStalls INTEGER,
                         CfgBlameGpuSaturation REAL,
 
+                        -- Capture clock anchor
+                        CaptureAnchorUtc TEXT,
+                        CaptureAnchorQpcMs REAL,
+                        TimeBase TEXT,
+
                         -- File pointers (absolute paths)
                         FileAnalysisPath TEXT,
                         FileRawDataPath TEXT
@@ -1794,8 +1810,18 @@ internal partial class Program
                 Console.WriteLine($"Command: {presentMonPath} {arguments}");
                 Console.WriteLine($"CSV output: {presentMonCsvPath}");
 
+                DateTime anchorUtc = DateTime.UtcNow;
+                double anchorQpcMs = Stopwatch.GetTimestamp() * 1000.0 / Stopwatch.Frequency;
+
                 presentMonProcess.Start();
                 Console.WriteLine($"PresentMon started successfully.");
+
+                perfData.CaptureAnchorUtc = anchorUtc;
+                perfData.CaptureAnchorQpcMs = anchorQpcMs;
+                perfData.TimeBase = "relative";
+                Console.WriteLine($"Capture anchor UTC: {anchorUtc:o}");
+                Console.WriteLine($"Capture anchor QPC: {anchorQpcMs:F4}ms");
+                Console.WriteLine($"TimeBase: {perfData.TimeBase}");
             }
             catch (Exception ex)
             {

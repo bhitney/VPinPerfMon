@@ -30,6 +30,9 @@ One row is written per capture (one table, one play session, one `VPinPerfMon.ex
 The most common value for the chain is stored. |
 | `GpuName` | NVIDIA GPU model reported by NVML for GPU index 0, for example `NVIDIA GeForce RTX 5080`. NULL when NVML was unavailable. Rows backfilled with `--regrade` carry the value that was passed with `--gpu_name`, or stay unchanged. |
 | `GpuDriverVersion` | NVIDIA driver version at capture time (or the `--gpu_driver` value for backfilled rows). NULL when NVML was unavailable. |
+| `CaptureAnchorUtc` | ISO 8601 UTC time taken just before PresentMon was launched, for example `2026-11-12T14:31:30.1234567Z`. NULL on rows captured before migration 006. Together with `CaptureAnchorQpcMs` it ties a frame's QPC time to wall-clock time. |
+| `CaptureAnchorQpcMs` | The QPC clock in milliseconds, read at the same instant as `CaptureAnchorUtc`. It restarts at reboot, so use it only with the `CaptureAnchorUtc` of the same row. A frame's UTC time is `CaptureAnchorUtc + (CPUStartQPCTime - CaptureAnchorQpcMs)` ms. |
+| `TimeBase` | Which time column the PresentMon CSV carries: `relative` (`CPUStartTime`, ms since the trace started) or `qpc` (`CPUStartQPCTime`, absolute QPC ms). NULL means an old row, treat it as `relative`. |
 | `FileAnalysisPath` |
 | `FileRawDataPath` | Absolute path to the PresentMon CSV of the run. `NULL` when the CSV was deleted at run time. May no longer exist. |
 

@@ -492,6 +492,7 @@ sqlite3 PUPDatabase.db < Migrations\001_add_stutter_grade_columns.sql
 - Run `001` **once**, and **before** deploying the new VPinPerfMon.exe. It adds nullable columns only, so existing rows are untouched, but SQLite fails with `duplicate column name` if a column already exists.
 - `002_drop_consoleoutput.sql` removes the old `ConsoleOutput` column. Run it only after the new version has been deployed and you have confirmed nothing still writes to that column. It needs SQLite 3.35 or later and cannot be undone.
 - `003_add_gpu_info_columns.sql` adds `GpuName` and `GpuDriverVersion`, `004_add_stall_blame_columns.sql` adds the stall-blame columns, and `005_add_blame_gpu_saturation.sql` adds `CfgBlameGpuSaturation`. They add nullable columns only, and SQLite fails with `duplicate column name` if a column already exists. Run them before `--regrade`, which stops with a list of missing columns if any are absent. Then run `--regrade --force --apply` to recompute blame for old rows, because the old values are not comparable.
+- `006_add_capture_clock_anchor.sql` adds `CaptureAnchorUtc`, `CaptureAnchorQpcMs` and `TimeBase`. Run it **before** deploying the VPinPerfMon.exe that writes them, because the INSERT fails if the columns are missing. The script ends with commented rollback statements.
 - The new version no longer stores console text in the database.
 
 ### Regrading Past Runs

@@ -185,6 +185,11 @@
     CfgBlameMinStalls INTEGER,    -- CPU+GPU stalls needed before blame is reported
     CfgBlameGpuSaturation REAL,   -- GPU rule: GPUBusy >= this fraction of the refresh on the stalled/next frame
 
+    -- Capture clock anchor (migration 006)
+    CaptureAnchorUtc TEXT,        -- ISO 8601 UTC just before PresentMon was launched; NULL on old rows
+    CaptureAnchorQpcMs REAL,      -- QPC clock in ms read at the same instant (restarts at reboot)
+    TimeBase TEXT,                -- 'relative' (CPUStartTime) or 'qpc' (CPUStartQPCTime); NULL = relative
+
     -- File pointers (absolute paths; files may be cleaned up later)
     FileAnalysisPath TEXT,        -- console output .txt
     FileRawDataPath TEXT          -- PresentMon .csv (NULL if deleted at run time)
