@@ -58,6 +58,22 @@ Deploy order: run migration 006, then deploy the new exe. The INSERT names the n
 - Not covered by any automated test: the repo has no test project. The check above was a one-off.
 - The console line `First frame CPUStartTime: ...` still prints the baseline, which is an absolute QPC value in the new format. A reader that compares it with the CSV's own column (the report JS does) gets consistent numbers, but it is no longer "near zero".
 
+### Step 3 (done): system sampler
+- New `SystemSampler.cs`. Flags: `--sysstats <true|false>` (default true, skipped when `--deletecsv true`) and `--sysstats_top <n>` (default 5). It starts just before the capture loop and stops first in the `finally` block, before PresentMon is stopped.
+- Files, with the same `<timestamp>_<game>` stem as the CSV: `SysStats_*.csv`, `SysProcs_*.csv`, `SysEvents_*.csv`. Column lists are in `VPinPerfMon/readme.md`.
+- Data comes from `PerformanceCounterCategory.ReadCategory` snapshots (Processor, Process, GPU Engine) plus a few single counters (Memory, System, PhysicalDisk). Rates are computed from consecutive snapshots with `CounterSample.Calculate`. Foreground window uses `GetForegroundWindow`. Process start/exit comes from diffing PIDs between snapshots.
+- Process CPU % is divided by the logical core count so it is a share of the whole machine. GPU % per process is the busiest engine type for that PID, and `GpuTotalPct` is the busiest engine type on one adapter. Treat GPU numbers as approximate.
+- The sampler runs on its own task with a `PeriodicTimer`. A failed counter gives an empty cell. A tick that throws is reported once and the sampler keeps going.
+- Changes from the first sketch: `QpcMs` is on every row; CPU frequency, throttling and per-core columns were dropped, apart from `CpuMaxCorePct`; the sampler excludes processes by name, so the game name must be given with `--process_name` for it to be left out.
+
+Tests (this machine, Release build, short Chrome captures, 12-15 s):
+- All three files are written with the stem of the CSV. `--sysstats false` writes none of them.
+- Sampler QPC range sits inside the PresentMon range (first sampler row 1.01 s after the first frame, last 0.93 s before the last frame, over a 14.9 s capture). Spacing between samples was 995-1013 ms.
+- Deliberate load: a hidden PowerShell loop that spun for 5 s showed up in `SysProcs` at 4.8-5.0% CPU for the matching samples (a single busy core out of a multi-core machine), and `CpuMaxCorePct` rose from about 30% to 56-64% in the same seconds. Its exit appeared in `SysEvents`. I did not check the core count to confirm the 5% figure.
+- Cost: counter reading took about 21 ms on average and 36 ms at most per sample (reported as `SampleMs`). That is on a background task, but it is a burst of CPU once a second, so check `SampleMs` on the cab while a game runs.
+- Database: migration 006 applied to a scratch copy of `PUPDatabase.db` (144 to 147 columns, 333 old rows unchanged). A capture with `--outputsql` inserted one row with the anchor columns filled and `TimeBase = qpc`. The 333 older rows have NULL anchors.
+- Not tested: a real game on the cab, a machine without the GPU Engine counters, a non-English Windows install (counter names are localized there, so the category lookups may fail and leave cells empty), and a session started from the Popper front end.
+
 ## Remaining steps
 
 2. **Parsers in VpinReports and VPinPerfMon** (Python and JS, C# `ParsePresentMonCsv`, `StallBlameCalc.cs`, report JavaScript): detect the header (`CPUStartTime` or `CPUStartQPCTime`) and normalize to seconds since the first frame. Add a QPC fixture to the JS tests. Check the `First frame CPUStartTime` line that the JS parses from the `.txt`, and the warm-up cutoff, because a QPC value is absolute and not near zero.
