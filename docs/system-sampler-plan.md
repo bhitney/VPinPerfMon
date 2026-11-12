@@ -51,6 +51,13 @@ Deploy order: run migration 006, then deploy the new exe. The INSERT names the n
 - `TimeBase` is written as `relative` because the capture command is unchanged. It changes to `qpc` in step 4.
 - Capture output is otherwise identical. The PresentMon command and CSV are untouched.
 
+### Step 2a (done): C# parser reads both time columns
+- `Program.cs` `ParsePresentMonCsv` uses `CPUStartTime` when present, otherwise `CPUStartQPCTime`. `PresentMonFrame.CPUStartTime` and the warm-up baseline changed from `float` to `double`, because absolute QPC ms are about 1.1e8 and a float keeps only about 7 significant digits (it would round to roughly 8 ms steps). With neither column present it prints a warning and skips warm-up filtering.
+- `--regrade` calls the same parser, so it handles both formats.
+- Tested by calling the parser on `Whitewater (Williams 1993).csv` (old format: 26,525 frames, 22,399 kept after a 30 s warm-up, same as before) and `PresentMon26_test_qpctimems.csv` (QPC: 465 frames, 244 kept after 5 s on the chosen swap chain, 278 rows at or after t0+5 s before the swap chain filter, matching an independent count). A 30 s warm-up on that file keeps nothing because the file only spans about 12 s.
+- Not covered by any automated test: the repo has no test project. The check above was a one-off.
+- The console line `First frame CPUStartTime: ...` still prints the baseline, which is an absolute QPC value in the new format. A reader that compares it with the CSV's own column (the report JS does) gets consistent numbers, but it is no longer "near zero".
+
 ## Remaining steps
 
 2. **Parsers in VpinReports and VPinPerfMon** (Python and JS, C# `ParsePresentMonCsv`, `StallBlameCalc.cs`, report JavaScript): detect the header (`CPUStartTime` or `CPUStartQPCTime`) and normalize to seconds since the first frame. Add a QPC fixture to the JS tests. Check the `First frame CPUStartTime` line that the JS parses from the `.txt`, and the warm-up cutoff, because a QPC value is absolute and not near zero.

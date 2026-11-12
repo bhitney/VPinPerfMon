@@ -78,7 +78,7 @@ internal partial class Program
         public string PresentFlags { get; set; } = string.Empty;
         public int AllowsTearing { get; set; }
         public string PresentMode { get; set; } = string.Empty;
-        public float CPUStartTime { get; set; }
+        public double CPUStartTime { get; set; }
         public float FrameTime { get; set; }
         public float CPUBusy { get; set; }
         public float CPUWait { get; set; }
@@ -1983,11 +1983,11 @@ internal partial class Program
     {
         Console.WriteLine("\nParsing PresentMon data...");
 
-        float delayStartMs = delayStart * 1000.0f; // Convert to milliseconds
+        double delayStartMs = delayStart * 1000.0; // Convert to milliseconds
         int totalFramesParsed = 0;
         int framesFiltered = 0;
-        float? firstFrameCpuStartTime = null; // Track the first frame's CPUStartTime as baseline
-        float warmupThreshold = 0.0f;
+        double? firstFrameCpuStartTime = null; // Track the first frame's start time as baseline
+        double warmupThreshold = 0.0;
 
         using (StreamReader reader = new(csvPath))
         {
@@ -2001,6 +2001,14 @@ internal partial class Program
             for (int i = 0; i < headers.Length; i++)
             {
                 columnMap[headers[i].Trim()] = i;
+            }
+
+            // CPUStartTime: ms since the trace started (default). CPUStartQPCTime: absolute QPC ms (--qpc_time_ms).
+            string? startTimeColumn = columnMap.ContainsKey("CPUStartTime") ? "CPUStartTime"
+                : columnMap.ContainsKey("CPUStartQPCTime") ? "CPUStartQPCTime" : null;
+            if (startTimeColumn == null)
+            {
+                Console.WriteLine("Warning: no CPUStartTime or CPUStartQPCTime column found. Warm-up frames cannot be filtered.");
             }
 
             // Read all data rows
@@ -2056,9 +2064,9 @@ internal partial class Program
                 if (columnMap.TryGetValue("PresentMode", out idx) && columns.Length > idx)
                     frame.PresentMode = columns[idx].Trim();
 
-                if (columnMap.TryGetValue("CPUStartTime", out idx) && columns.Length > idx)
+                if (startTimeColumn != null && columnMap.TryGetValue(startTimeColumn, out idx) && columns.Length > idx)
                 {
-                    if (float.TryParse(columns[idx], NumberStyles.Float, CultureInfo.InvariantCulture, out float value))
+                    if (double.TryParse(columns[idx], NumberStyles.Float, CultureInfo.InvariantCulture, out double value))
                         frame.CPUStartTime = value;
                 }
 
