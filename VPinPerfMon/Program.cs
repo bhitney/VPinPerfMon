@@ -2017,13 +2017,13 @@ internal partial class Program
         }
         else if (sysStats)
         {
-            List<string> excluded = [.. processNames];
+            List<string> excluded = [];
             if (!string.IsNullOrEmpty(presentMonPath))
             {
                 excluded.Add(Path.GetFileNameWithoutExtension(presentMonPath));
             }
 
-            sampler = new SystemSampler(baseFilename, sysStatsTop, excluded, sysStatsPriority);
+            sampler = new SystemSampler(baseFilename, sysStatsTop, excluded, processNames, sysStatsPriority);
             if (!sampler.Start())
             {
                 sampler = null;

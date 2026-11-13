@@ -48,6 +48,7 @@ internal sealed class SystemSampler
     private readonly int _selfPid = Environment.ProcessId;
     private readonly int _coreCount = Environment.ProcessorCount;
     private readonly HashSet<string> _excluded = new(StringComparer.OrdinalIgnoreCase) { "_Total", "Idle", "VPinPerfMon" };
+    private readonly HashSet<string> _games = new(StringComparer.OrdinalIgnoreCase);
 
     private StreamWriter? _stats;
     private StreamWriter? _procs;
@@ -80,7 +81,7 @@ internal sealed class SystemSampler
     private double _sumComputeMs;
     private bool _tickErrorReported;
 
-    public SystemSampler(string baseFilename, int topN, IEnumerable<string> excludedProcessNames, ThreadPriority priority = ThreadPriority.Normal)
+    public SystemSampler(string baseFilename, int topN, IEnumerable<string> excludedProcessNames, IEnumerable<string> gameProcessNames, ThreadPriority priority = ThreadPriority.Normal)
     {
         _priority = priority;
         const string prefix = "PresentMon_";
@@ -97,6 +98,11 @@ internal sealed class SystemSampler
         {
             _excluded.Add(StripExe(name.Trim()));
         }
+
+        foreach (string name in gameProcessNames)
+        {
+            _games.Add(StripExe(name.Trim()));
+        }
     }
 
     /// <summary>QPC clock in milliseconds, computed the same way as the capture anchor.</summary>
@@ -107,7 +113,7 @@ internal sealed class SystemSampler
         try
         {
             _stats = OpenWriter(_statsPath, "QpcMs,UtcTime,CpuTotalPct,CpuMaxCorePct,DpcPct,InterruptPct,CtxSwitchesPerSec,DiskBytesPerSec,DiskQueue,MemAvailMB,PagesInputPerSec,GpuTotalPct,ForegroundProcess,SampleMs,SampleCpuMs,ReadMs,ComputeMs");
-            _procs = OpenWriter(_procsPath, "QpcMs,Pid,ProcessName,CpuPct,GpuPct,WorkingSetMB,IoBytesPerSec");
+            _procs = OpenWriter(_procsPath, "QpcMs,Pid,ProcessName,CpuPct,GpuPct,WorkingSetMB,IoBytesPerSec,Game");
             _events = OpenWriter(_eventsPath, "QpcMs,Event,ProcessName,Pid");
 
             List<string> unavailable = [];
@@ -332,7 +338,7 @@ internal sealed class SystemSampler
                     double cpu = (Rate(_prevProcess, process, "% Processor Time", instance) ?? 0.0) / _coreCount;
                     double workingSetMb = process.TryGet("Working Set", instance, out CounterSample workingSet) ? workingSet.RawValue / 1048576.0 : 0.0;
                     double? io = Rate(_prevProcess, process, "IO Data Bytes/sec", instance);
-                    candidates.Add(new ProcessRow(pid, name, cpu, gpuByPid.GetValueOrDefault(pid), workingSetMb, io));
+                    candidates.Add(new ProcessRow(pid, name, cpu, gpuByPid.GetValueOrDefault(pid), workingSetMb, io, _games.Contains(name)));
                 }
             }
 
@@ -368,14 +374,16 @@ internal sealed class SystemSampler
                 _lastForeground = foreground;
             }
 
-            IEnumerable<ProcessRow> selected = candidates.Where(p => p.CpuPct >= CpuReportThresholdPct).OrderByDescending(p => p.CpuPct).Take(_topN)
-                .Concat(candidates.Where(p => p.GpuPct >= GpuReportThresholdPct).OrderByDescending(p => p.GpuPct).Take(_topN))
+            // The game is written every second (not subject to the thresholds or top-N) so the report can show it apart from the background.
+            IEnumerable<ProcessRow> selected = candidates.Where(p => p.IsGame)
+                .Concat(candidates.Where(p => !p.IsGame && p.CpuPct >= CpuReportThresholdPct).OrderByDescending(p => p.CpuPct).Take(_topN))
+                .Concat(candidates.Where(p => !p.IsGame && p.GpuPct >= GpuReportThresholdPct).OrderByDescending(p => p.GpuPct).Take(_topN))
                 .DistinctBy(p => p.Pid);
             foreach (ProcessRow row in selected)
             {
                 _procs.WriteLine(string.Join(',',
                     Format(qpcMs, "F4"), row.Pid.ToString(CultureInfo.InvariantCulture), Csv(row.Name),
-                    Format(row.CpuPct), Format(row.GpuPct), Format(row.WorkingSetMb, "F1"), Format(row.IoBytesPerSec, "F0")));
+                    Format(row.CpuPct), Format(row.GpuPct), Format(row.WorkingSetMb, "F1"), Format(row.IoBytesPerSec, "F0"), row.IsGame ? "1" : "0"));
             }
 
             _stats.WriteLine(string.Join(',',
@@ -508,7 +516,7 @@ internal sealed class SystemSampler
     private static string Csv(string value) =>
         value.IndexOfAny([',', '"', '\r', '\n']) >= 0 ? $"\"{value.Replace("\"", "\"\"")}\"" : value;
 
-    private sealed record ProcessRow(int Pid, string Name, double CpuPct, double GpuPct, double WorkingSetMb, double? IoBytesPerSec);
+    private sealed record ProcessRow(int Pid, string Name, double CpuPct, double GpuPct, double WorkingSetMb, double? IoBytesPerSec, bool IsGame);
 
     private sealed class CategoryReader
     {
