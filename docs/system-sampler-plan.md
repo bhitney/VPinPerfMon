@@ -113,24 +113,63 @@ Tests (this machine, Release build, short Chrome captures, 12-15 s):
   - Frames (Phosphor, 72 Hz, 22 s under load): frames at 1.5x the median DisplayedTime or more were 0.51% with the sampler off, 1.49% old, 1.20% new, 0.35% below normal, 0.79% lowest. One run each, not monotonic with priority, and the load was not identical, so this does not show the sampler hurting or not hurting the target.
   - Not measured: which counter category (Processor, Process, GPU Engine) takes the time. Not done: reducing the reads. Not tested: a game near its frame budget.
 
+### Load tests on the cab, and what the stalls showed (Twilight Zone, Dark Chaos, Die Hard)
+- `tools/LoadBursts.ps1` creates a scheduled CPU load and logs each burst on the QPC clock. It was started from the same batch file as VPinPerfMon, so its clock starts about 3.7 s before the capture anchor. Settings on the cab (8 cores): 4 cores busy, a burst every 30 s from 60 s after the script started, eight bursts, `StartDelaySec` 0.000 for every burst.
+- Twilight Zone (PUP, videos on other monitors): two `ffmpeg` recordings and encodes saturated the CPU (99%). `SysStats` and `SysProcs` showed them at the right seconds, with `ffmpeg` at 50-83% CPU. The game played A (100) with a worst `FrameTime` of 7.95 ms. `SampleMs` rose to 184 ms average under that load (see the cost section above).
+- Dark Chaos, 10 s bursts, order sampler on then off: both runs graded B (88.6 and 88.7). Slow frames (FrameTime of 11 ms or more) were 66 with the sampler on and 46 with it off, which one pair of runs cannot separate from chance or from run order.
+- Die Hard Trilogy, 3 s bursts, order reversed (sampler off first): rows 1602 (off) and 1603 (on), grades A 99.7 and A 97.7, 1 and 2 frames at 1.5x the refresh or more. Machine CPU averaged 61% in the burst seconds against 11% away, and `SampleMs` stayed at 3.1 ms in both. `SysProcs` listed `powershell` in all 16 full burst seconds at 49.8%.
+- Stall analysis over the five runs that have `Sys*` files: 29 stalls (a frame at 2x the refresh or more, or a displayed frame at 1.5x or more, merged within 0.5 s). Dark Chaos had 27, Die Hard 1, Blue Note 1, Fleet Jr and Twilight Zone none. 16 were CPU-side (`CPUBusy` close to the whole frame time), 1 GPU-side, 12 small one-refresh misses. For each stall, that second was ranked against all other seconds of the run: it was in the top 5% for total CPU in 2 of 29 (0 of 17 outside burst windows), for the busiest core in 4, DPC 1, interrupts 1, disk 0, paging 0, GPU 2. A process other than `powershell` at 5% machine CPU or more was listed in 2 of 29. Conclusion: no stall in this data has a system-level cause the sampler can see. The stalls fit the game's own CPU work (scripts, in-game events), but this does not prove that, and 29 events from five runs is a small sample.
+- Stall timing check, Die Hard run 2: the 27 ms stall at 66.1 s started 100 ms after a sampler tick that had already finished, so the sampler did not overlap it. The 12.7 ms frame at 59.02 s ended 2 ms before a tick started and sat at the end of a burst.
+- Not possible: replaying the same pinball game twice, so a clean A/B of the sampler on frame times cannot be done. Not tested: a table near its frame budget, and full saturation of 8 cores while a game runs.
+
+### Sampler overhead (tool process, local measurement)
+Four 40 s captures against Phosphor on this machine (20 logical cores), sampler off and on, twice each.
+- CPU time of the tool: about 0.43 s with the sampler off and 1.32 s with it on. The sampler costs about 0.9 CPU-seconds per 40 s, roughly 2% of one core.
+- Memory: peak working set 66-79 MB off, 99 MB on. Private memory 38-49 MB off, 68 MB on. It stays flat during the run.
+- Threads: 23 off, 24 on. Handles about the same (515-531 off, 521 on).
+- Output: the three `Sys*` files were about 9 KB in 40 s. On the cab a 330 s run produced about 38 KB, 28 KB and 3 KB for the three files.
+- Per sample on the cab: 3.1-3.4 ms elapsed on average, about 3 ms of that is the sampler's own CPU time, 24 ms at most. Under full saturation the elapsed time is 170-500 ms, mostly waiting for a core.
+- Not measured: the effect on frame times of a running game beyond the on/off pairs above, 8 cores under full load, and any effect on other processes.
+
+### Known issues found along the way
+- Before `96b450e` the INSERT did not write `SwapChainAddress`, `SwapChainCount` and `PresentApplication`. They were dropped in commit `6210a9c` (2026-11-10), before any of the sampler work, and the report reads them. Rows 1592, 1593 and 1596 to 1601 have them NULL. Of the rows a regrade can reach, a forced regrade restores them (8 NULL rows became 3 on a copy of the database; the 3 left have no log files).
+- Before `eaa5e85` the INSERT did not write `BlameVersion`, `GpuBusyPctOfRefresh`, `StallCpuCount`, `StallGpuCount`, `StallModeSwitchCount` and `StallAppWaitCount`. `StallModeSwitchCount` and `StallAppWaitCount` are not in the regrade's column list either, so they are NULL for 337 of 341 rows and a regrade will not fill them. Not investigated.
+- The version string in the console log is the commit that was checked out at build time, not the code that was compiled. A build from a working tree with uncommitted changes reports the previous commit (this made the cab build look older than it was).
+
+### Regrade of the existing database (not yet run on the real database)
+- Tested on a copy of the cab database: `--regrade --force --allow-mismatch --apply` from `E:\perflogs\logs` updated 338 of 341 rows (rows 1592, 1593 and 1596 have no log files). No row's stored grade letter changed and no `StutterGradeScore` moved by 0.05 or more.
+- It rewrites `FileAnalysisPath` and `FileRawDataPath` to the folder passed with `--logpath`, on the machine that runs it. It changed `GradeFrames` and `GradeDurationSec` in 42 rows and `GradeMissingFrames` in 78 (the truncated-row fix drops the cut-off last CSV row, so stored frame counts are one higher than the parser now gives; `PresentMonFrameCount` is not rewritten).
+- Without `--allow-mismatch`, rows whose stored frame count is one higher are skipped (32 of the newest 40).
+- Scanning `E:\perflogs\logs\archive` adds nothing: its 1,494 `.txt` files are almost all without a database row.
+- Run it last, with a backup (`--apply` writes one first), and on the machine whose log folder you want in the stored paths.
+
 ## Remaining steps
 
-2. **Parsers in VpinReports and VPinPerfMon** (Python and JS, C# `ParsePresentMonCsv`, `StallBlameCalc.cs`, report JavaScript): detect the header (`CPUStartTime` or `CPUStartQPCTime`) and normalize to seconds since the first frame. Add a QPC fixture to the JS tests. Check the `First frame CPUStartTime` line that the JS parses from the `.txt`, and the warm-up cutoff, because a QPC value is absolute and not near zero.
-3. **Sampler** (`SystemSampler.cs`): 1 Hz, writes `SysStats_<stem>.csv`, `SysProcs_<stem>.csv` (top N or above a CPU threshold, excluding the game, PresentMon and this tool) and optionally `SysEvents_<stem>.csv`. Every row carries `QpcMs` computed as `Stopwatch.GetTimestamp() * 1000.0 / Stopwatch.Frequency`. Counter reads are wrapped so a failure writes blanks instead of aborting a capture. Needs a CLI flag, and a Setup GUI checkbox later.
-4. **(done, changed from the original plan) `--timebase <qpc|relative>`, default `qpc`.** Decision: the project is bleeding edge, and defaulting to the newest behavior needs the fewest changes to the Popper scripts on the cab. `qpc` adds `--qpc_time_ms` to the PresentMon command and stores `TimeBase = qpc`. `--timebase relative` restores the old behavior (no extra flag, `TimeBase = relative`). All bundled PresentMon versions (2.4.1, 2.5.0, 2.6.0) list `--qpc_time_ms`. Consequence: until VpinReports is updated, the report's CSV drill-down fails on new CSVs, because it requires a `CPUStartTime` column. The Python reports read only the database and are not affected. Keep the CSVs (`--deletecsv false`). Tested with 10 s Chrome captures: default run wrote `CPUStartQPCTime`, the anchor was 0.107 s before the first frame, and `--timebase relative` wrote `CPUStartTime` as before.
-5. **Reports:** correlation lane under the frame timeline, stall tooltip with the top processes, and a more specific diagnosis.
-6. **Phase 2:** ETW deep capture, opt-in, triggered by a detected stall.
+Done: 1 anchor and migrations 006 and 007, 2a C# parser for both time columns, 3 sampler, 4 `--timebase` (default `qpc`), stop sequence, `FileAssetStem`, sampler timing columns and `--sysstats_priority`, `tools/LoadBursts.ps1`.
+
+Still to do:
+- **VpinReports** (step 2 for the reports side and step 5): the report's CSV drill-down hard-codes `CPUStartTime` (the numeric column list, the required-column check, the timeline code, `tests/drilldown.test.js`) and parses `First frame CPUStartTime: ... ms` from the `.txt` for the warm-up cutoff, which is absolute with `qpc`. It needs a QPC fixture in the JS tests. Then the correlation lane under the frame timeline, the stall tooltip with the busiest processes, and a more specific diagnosis. Until then, runs on the new build with the default `--timebase qpc` break the drill-down; `--timebase relative` avoids that.
+- **Regrade** the real database (above), after any further grading changes.
+- **Later, optional:** remove `FileAnalysisPath` and `FileRawDataPath` once the reports use `FileAssetStem`; look at why `StallModeSwitchCount` and `StallAppWaitCount` are not stored; phase 2, ETW deep capture (needs elevation, parked because every stall in the data had a quiet system).
 
 ## Open questions
 
-- Should the sampler be on by default? Top N or a CPU threshold for the process list?
-- Is the `--date_time` error a PresentMon bug on every time zone? Test on a machine set to another zone and in summer time, then report upstream. Does not block this plan.
-- How the 2.6.0 exe is shipped: resolved. `PresentMon/PresentMon-2.6.0-x64.exe` is committed and is the version used going forward. 2.4.1 and 2.5.0 stay in the folder for now (the Setup project copies every `PresentMon/*.exe` to `distrib`). Setup's Getting Started page picks the highest-named exe and falls back to 2.6.0.
+- Resolved: the sampler is on by default (`--sysstats true`), top 5 processes by CPU and by GPU, at least 1% CPU and 2% GPU. The overhead is about 2% of one core and 20-30 MB.
+- Open: is the `--date_time` error a PresentMon bug on every time zone? Only seen on one Eastern-time machine with PresentMon 2.4.1 to 2.6.0. Test on another zone and in summer time, then report upstream. It does not block this plan, since `qpc` is the default.
+- Open: whether a table near its frame budget shows a sampler effect that the tables tested here (7.25 ms refresh, plenty of headroom) could not.
+- Resolved: how the 2.6.0 exe is shipped. `PresentMon/PresentMon-2.6.0-x64.exe` is committed and is the version used going forward. 2.4.1 and 2.5.0 stay in the folder (the Setup project copies every `PresentMon/*.exe` to `distrib`). The cab was still running 2.5.0 in the logs reviewed.
 
 ## Rollback summary
 
 | Change | How to undo |
 |---|---|
-| Code in `Program.cs` | `git revert` the commit. No data format changes in step 1. |
-| Database columns | Commented `DROP COLUMN` block in migration 006, after deploying an exe that no longer writes them. |
-| `--timebase qpc` as the default (step 4) | Pass `--timebase relative` in the cab scripts, or change the default in `Program.cs` (`useQpcTime`). Files already written keep `TimeBase = qpc`, so the parsers must keep handling both. |
+| Anchor and `TimeBase` (migration 006) | `git revert` the code, then the commented `DROP COLUMN` block in migration 006 after deploying an exe that no longer writes the columns. |
+| `FileAssetStem` (migration 007) | Same pattern: the commented `DROP COLUMN` at the end of the script, after deploying an exe that no longer writes it. |
+| `--timebase qpc` as the default | Pass `--timebase relative` in the cab scripts, or change the default in `Program.cs` (`useQpcTime`). Files already written keep `TimeBase = qpc`, so the parsers must keep handling both. |
+| System sampler | Pass `--sysstats false` in the cab scripts. Nothing else depends on it. Existing `Sys*` files can be deleted. |
+| New PresentMon stop sequence | Revert `StopPresentMon` in `Program.cs` to the previous Ctrl+C then kill sequence. The CSV may then end in a cut-off row, which the parser skips. |
+| Parser change to `double` and the incomplete-row skip | `git revert` the commit. Old CSVs (`CPUStartTime`) work with either version. |
+| INSERT additions (blame columns, swap chain columns, stem, anchor) | `git revert` the commit. Old rows keep their values. |
+| Regrade | `--apply` writes `<database>.bak_<time>` first. Restore that file to undo it. |
+| `tools/LoadBursts.ps1` | Delete the script. It is not used by the tool. |
+
