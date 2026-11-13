@@ -149,7 +149,7 @@ Four 40 s captures against Phosphor on this machine (20 logical cores), sampler 
 Done: 1 anchor and migrations 006 and 007, 2a C# parser for both time columns, 3 sampler, 4 `--timebase` (default `qpc`), stop sequence, `FileAssetStem`, sampler timing columns and `--sysstats_priority`, `tools/LoadBursts.ps1`.
 
 Still to do:
-- **VpinReports** (step 2 for the reports side and step 5): the report's CSV drill-down hard-codes `CPUStartTime` (the numeric column list, the required-column check, the timeline code, `tests/drilldown.test.js`) and parses `First frame CPUStartTime: ... ms` from the `.txt` for the warm-up cutoff, which is absolute with `qpc`. It needs a QPC fixture in the JS tests. Then the correlation lane under the frame timeline, the stall tooltip with the busiest processes, and a more specific diagnosis. Until then, runs on the new build with the default `--timebase qpc` break the drill-down; `--timebase relative` avoids that.
+- **VpinReports** (done, see `CHANGES.md` in that repository): the drill-down reads both time columns, loads `SysStats_`, `SysProcs_` and `SysEvents_` for a run, shows a synced system-load lane, a processes card (stacked CPU and GPU, memory, I/O), the busiest processes in each stall row and tooltip, and a frame-time jitter tile. Not done there: a more specific diagnosis that uses the sampler data (no stall in the cab runs had a clear system cause, so there was nothing to base one on).
 - **Regrade** the real database (above), after any further grading changes.
 - **Later, optional:** remove `FileAnalysisPath` and `FileRawDataPath` once the reports use `FileAssetStem`; phase 2, ETW deep capture (needs elevation, parked because every stall in the data had a quiet system).
 

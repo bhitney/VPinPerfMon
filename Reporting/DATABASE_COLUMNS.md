@@ -26,15 +26,15 @@ One row is written per capture (one table, one play session, one `VPinPerfMon.ex
 | `PresentMonFrameCount` | Number of rendered frames analysed from PresentMon, after the warm-up period and for the selected swap chain only. Use this as the run's frame count. It includes the last few seconds that the grade excludes, so it is slightly larger than `GradeFrames`. |
 | `SwapChainAddress` | Address of the swap chain that was analysed (the playfield). Informational. |
 | `SwapChainCount` | How many swap chains were present in the capture. More than 1 means the tool had to choose (the one with the most frames). Values above 1 mark captures where the selection mattered. |
-| `PresentApplication` | The executable that owns the analysed swap chain, for example `VPinballX64.exe` (VPX 10.8) or `VPinballX_BGFX64.exe` (BGFX). Useful for splitting renderers. |
-The most common value for the chain is stored. |
-| `GpuName` | NVIDIA GPU model reported by NVML for GPU index 0, for example `NVIDIA GeForce RTX 5080`. NULL when NVML was unavailable. Rows backfilled with `--regrade` carry the value that was passed with `--gpu_name`, or stay unchanged. |
+Useful for splitting renderers. |
+| `PresentMode` | How frames reach the display, for example `Hardware: Independent Flip`, `Hardware Composed: Independent Flip` or `Composed: Flip`. Independent flip is the lowest-overhead mode. The most common value for the chain is stored. |
+| `GpuName` |
 | `GpuDriverVersion` | NVIDIA driver version at capture time (or the `--gpu_driver` value for backfilled rows). NULL when NVML was unavailable. |
 | `CaptureAnchorUtc` | ISO 8601 UTC time taken just before PresentMon was launched, for example `2026-11-12T14:31:30.1234567Z`. NULL on rows captured before migration 006. Together with `CaptureAnchorQpcMs` it ties a frame's QPC time to wall-clock time. |
 | `CaptureAnchorQpcMs` | The QPC clock in milliseconds, read at the same instant as `CaptureAnchorUtc`. It restarts at reboot, so use it only with the `CaptureAnchorUtc` of the same row. A frame's UTC time is `CaptureAnchorUtc + (CPUStartQPCTime - CaptureAnchorQpcMs)` ms. |
 | `TimeBase` | Which time column the PresentMon CSV carries: `relative` (`CPUStartTime`, ms since the trace started) or `qpc` (`CPUStartQPCTime`, absolute QPC ms). NULL means an old row, treat it as `relative`. |
-| `FileAnalysisPath` |
-| `FileRawDataPath` | Absolute path to the PresentMon CSV of the run. `NULL` when the CSV was deleted at run time. May no longer exist. |
+| `FileAnalysisPath` | Absolute path to the text log of the run. May no longer exist if logs were cleaned up. |
+| `FileRawDataPath` |
 | `FileAssetStem` | The part of the file names that is the same for every file of the run, for example `20261112133050_Blue Note (Gottlieb 1979)`. It has no folder and no extension, so it works on any device: look in your own copy of the log folder (and its archive) for `<Prefix>_<FileAssetStem>.<extension>`. The files are `PresentMon_<stem>.csv` (frame data), `PresentMon_<stem>.txt` (console log), `SysStats_<stem>.csv`, `SysProcs_<stem>.csv` and `SysEvents_<stem>.csv` (system sampler, newer runs only). Treat it as a plain string, not a glob: game names can contain `[ ] * ?`. Match with the prefix and extension rather than `*_<stem>.*`, because a stem can be the tail of a longer one. Which files exist depends on the run (`--deletecsv true` or `--sysstats false` leave some out). Older rows were filled in from `FileRawDataPath` by migration 007. `NULL` means the stem is not known. |
 
 ## Stutter grade (recommended measure)
@@ -64,7 +64,7 @@ The grade counts **missed refreshes**: frames that stayed on screen for more tha
 
 ### Grading configuration (for reproducibility)
 
-`CfgDoubledRefreshes`, `CfgTripleRefreshes`, `CfgBandA`, `CfgBandB`, `CfgBandC`, `CfgBandD`, `CfgZeroScorePct`, `CfgTripleWeight`, `CfgTripleCapGrade`, `CfgTripleCapMinCount`, `CfgTrimStartSeconds`, `CfgTrimEndSeconds`, `CfgClusterWindowSec`, `CfgClusterWeight`, `CfgClusterMaxExcess`, `CfgClusterMinEvents`, `CfgClusterMinPeak`, `CfgMinFrames`.
+`CfgDoubledRefreshes`, `CfgTripleRefreshes`, `CfgBandA`, `CfgBandB`, `CfgBandC`, `CfgBandD`, `CfgZeroScorePct`, `CfgTripleWeight`, `CfgTripleCapGrade`, `CfgTripleCapMinCount`, `CfgTrimStartSeconds`, `CfgTrimEndSeconds`, `CfgClusterWindowSec`, `CfgClusterWeight`, `CfgClusterMaxExcess`, `CfgClusterMinEvents`, `CfgClusterMinPeak`, `CfgMinFrames`, `CfgBlameMinStalls`, `CfgBlameGpuSaturation`.
 
 These store the thresholds the row was graded with. Most are constants unless the tool was run with non-default settings or the rules were retuned, so they are rarely worth charting. Use them to check that two rows were graded the same way before comparing them. The values at the time of writing are 1.5 refreshes (doubled), 2.5 (3+), bands 0.1 / 0.4 / 1 / 3, weight 3, cap at C when 2 or more 3+ frames, 5 s tail dropped, 5 s windows, and a 100 frame minimum.
 
@@ -155,35 +155,41 @@ Caution: `CpuBusy` plus `CpuWait` is close to `FrameTime`, and a game that waits
 
 ## Bottleneck blame
 
-Blame answers *"when the game hitched, was the CPU or the GPU responsible?"* It looks only at **stalls**, the frames displayed for `CfgDoubledRefreshes` (1.5) refreshes or more, and ignores smooth frames. `DisplayedTime / GradeRefreshMs` gives the size of a stall. For each stall the stalled frame (`p`) and the next frame (`p+1`) are checked, and the **first** matching rule wins:
+`BlameCpuPct` and `BlameGpuPct` (0-100, always sum to 100) are the CPU-vs-GPU share of the **stalls the app itself caused**. A stall is a graded frame held for 1.5 refreshes or more. Each stall is classified (see [Stall causes](#stall-causes)), and the two numbers are the millisecond-weighted shares of the CPU-classified and GPU-classified stalls, where each stall weighs `DisplayedTime - refresh`. Present-mode-switch, app-waiting and display/compositor stalls are not blamed on either side.
 
-1. **CPU:** `max(CPUBusy at p, p+1) >= 1.5 * refresh` and the GPU maximum is not larger.
-2. **GPU:** `max(GPUBusy at p, p+1) >= CfgBlameGpuSaturation * refresh` **and** `max(FrameTime at p, p+1) >= 1.5 * refresh`. The second condition means the app was actually late. Without it, a run whose GPU sits near its limit all the time would label every unexplained stall as GPU.
-3. **Present-mode switch:** `PresentMode` of the previous or next frame differs.
-4. **App waiting / OS:** `FrameTime` of the next frame is at least 1.5 refreshes.
-5. **Display / compositor:** none of the above. The app finished on time and the delay came afterwards.
+Both are `NULL` when CPU stalls plus GPU stalls is below `CfgBlameMinStalls` (default 8). `NULL` means "not enough app-caused stalls to say", not "no timing data". Most runs are `NULL`, so never build a headline on blame: lead with `GpuBusyPctOfRefresh` and show blame, with the stall counts behind it, as the secondary "what caused the hitches" view.
 
-| Column | Meaning |
+`BlameVersion` records which formula produced the row: **4 is current; `NULL` or 1 is the legacy formula**. The legacy formula looked at the worst 1% of frames by `FrameTime` and used `CpuBusy * GpuWait` / `GpuBusy * CpuWait`. Frame-pacing limiters contaminated it, because `CpuBusy` includes the app's own limiter wait, so it reported extreme CPU blame on paced runs. Do not compare legacy and current values; the report labels anything below the highest version present as "legacy blame".
+
+### Stall causes
+
+| Columns | Meaning |
 |---|---|
-| `BlameCpuPct`, `BlameGpuPct` | Share of the combined overrun (`DisplayedTime - refresh`, in ms) of the CPU-caused and GPU-caused stalls (rules 1 and 2). They sum to 100. Long stalls count for more than short ones. **`NULL` when `StallCpuCount + StallGpuCount` is below `CfgBlameMinStalls`.** That is the normal result for a clean run, and for a run whose stalls were caused by the display or compositor. It does not mean the timing data was missing. |
-| `StallCpuCount`, `StallGpuCount`, `StallModeSwitchCount`, `StallAppWaitCount`, `StallDisplayCount` | How many stalls fell into each rule. Rules 3 to 5 are not the app's CPU or GPU work, so neither upgrade would help with them. Show these next to blame so a reader can see how many events it rests on. |
-| `GpuBusyPctOfRefresh` | Median `GPUBusy` as a percent of the refresh interval, over the graded frames. This is the most direct *"how close is the graphics card to its limit?"* number and it is defined for nearly every run. |
-| `BlameVersion` | `4` is the current method. `NULL` or `1` means the row still holds the old worst-1% formula, which is **not comparable** (it was misleading when a game limits its own frame rate). Do not mix versions in one chart without a label. |
-| `CfgBlameMinStalls` | Minimum CPU plus GPU stalls for blame to be reported (default 8). |
-| `CfgBlameGpuSaturation` | The `GPUBusy` fraction of a refresh used by rule 2 (default 0.9). |
+| `StallCpuCount`, `StallGpuCount`, `StallModeSwitchCount`, `StallAppWaitCount`, `StallDisplayCount` | Number of stalls per cause. Each stall falls in exactly one; the first matching rule below wins. |
+| `GpuBusyPctOfRefresh` | Median `GpuBusy` (frames with `GpuBusy > 0`, graded frames) as a percent of the refresh interval. The headline "is the graphics card the limit?" number. |
+| `CfgBlameMinStalls` | Minimum CPU+GPU stalls for blame to be reported (default 8). |
+| `CfgBlameGpuSaturation` | GPU rule threshold as a fraction of the refresh (default 0.9). |
 
-**Reading blame with GPU load.** The two answer different questions:
+For stall frame `p` (next frame `p+1` on the same swap chain), with `refresh` the stored `GradeRefreshMs` or the median `DisplayedTime`:
 
-| Stalls | `GpuBusyPctOfRefresh` | Likely reading |
-|---|---|---|
-| Many | High (over about 85%) | The GPU is close to its limit. A faster card should help. |
-| Many, mostly CPU-labelled | Low (under about 50%) | The GPU is not the limit and the CPU side is. |
-| Many, mostly mode-switch or display | Any | Neither. Overlays, screen recording or the compositor. A hardware upgrade will not help. |
-| Few | Any | Nothing is limiting. |
+1. **CPU:** `max(CPUBusy[p], CPUBusy[p+1]) >= 1.5 * refresh` and not (max `GPUBusy` greater than max `CPUBusy`).
+2. **GPU:** `max(GPUBusy[p], GPUBusy[p+1]) >= CfgBlameGpuSaturation * refresh` **and** `max(FrameTime[p], FrameTime[p+1]) >= 1.5 * refresh`. The app must actually be late; otherwise a run with steady GPU load above 90% would label every unexplained stall as GPU.
+3. **Present-mode switch:** `PresentMode` of `p-1` or `p+1` differs from `p`. Frames before the first graded frame (warm-up) are never looked at.
+4. **App waiting / OS:** `FrameTime[p+1] >= 1.5 * refresh`.
+5. **Display / compositor:** anything else.
 
-A run can have both a busy GPU and CPU-caused hitches. The band edges above are starting points and will move for VR.
+A missing `CPUBusy`, `GPUBusy` or `FrameTime` on the next frame counts as 0. The report's run drill-down reproduces this classifier from the raw CSV and compares the counts and blame with these columns.
 
-Blame is only a hint about hitches. For frame-paced runs (a game that holds each frame to the refresh), `CPUBusy` includes the game's own wait, so never use it to judge load. The stall rules use absolute limits for that reason.
+### Reading GPU load together with the stalls
+
+The drill-down makes a derived call (report-side only, nothing stored): many stalls, high GPU load and GPU-labelled stalls point to a **GPU-limited** run; many stalls, low GPU load and mostly CPU-labelled stalls point to **CPU-limited**; mostly present-mode-switch, display or app-waiting stalls mean **neither** (a CPU or GPU upgrade will not fix it). Anything else is unknown. Both facts are needed: a run can show 97% GPU load while its stalls are CPU hitches. The load bands (under 50% headroom, 50-85% moderate, over 85% high) are `GPU_LOAD_BANDS` in `report_config.py`; raise them for VR.
+
+Frame pacing caveat: the classifier uses absolute limits (1.5 refreshes), not `CpuBusy` relative to the frame time, so paced runs are handled. A CPU label on a paced run can still occur if the limiter overshoots, so do not over-claim.
+
+### GPU identity
+
+`GpuName` and `GpuDriverVersion` are the NVML device name and driver at capture time. Use them as filter or group fields; expect a single value until rows from another machine arrive. They are `NULL` on rows captured before the columns existed.
+
 
 ## Suggested visuals and pitfalls
 
