@@ -20,6 +20,7 @@
   <ItemGroup>
     <ProjectReference Include="..\VPinPerfMon\VPinPerfMon.csproj" ReferenceOutputAssembly="false" Private="false" />
     <ProjectReference Include="..\VPinPerfMon.GUI\VPinPerfMon.GUI.csproj" ReferenceOutputAssembly="false" Private="false" />
+    <ProjectReference Include="..\SendUserFlag\SendUserFlag.csproj" ReferenceOutputAssembly="false" Private="false" />
   </ItemGroup>
 
   <!-- Post-build: copy both projects' output to distrib, Windows runtimes only -->
@@ -65,6 +66,15 @@
       <GuiFiles Include="$(GuiOutDir)*.*" Exclude="$(GuiOutDir)*.pdb" />
     </ItemGroup>
     <Copy SourceFiles="@(GuiFiles)" DestinationFolder="$(DistribDir)" SkipUnchangedFiles="true" />
+
+    <!-- SendUserFlag companion tool -->
+    <PropertyGroup>
+      <FlagOutDir>$(MSBuildThisFileDirectory)..\SendUserFlag\bin\$(Configuration)\net10.0\</FlagOutDir>
+    </PropertyGroup>
+    <ItemGroup>
+      <FlagFiles Include="$(FlagOutDir)*.*" Exclude="$(FlagOutDir)*.pdb" />
+    </ItemGroup>
+    <Copy SourceFiles="@(FlagFiles)" DestinationFolder="$(DistribDir)" SkipUnchangedFiles="true" />
 
     <!-- PresentMon executables from solution-level PresentMon folder -->
     <ItemGroup>

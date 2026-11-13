@@ -17,6 +17,8 @@ namespace VPinPerfMon;
 internal sealed class SystemSampler
 {
     private const string GpuEngineCounter = "Utilization Percentage";
+    public const string FlagEventName = "Local\\VPinPerfMon_Flag";
+    private const int FlagDebounceMs = 500;
     private const double CpuReportThresholdPct = 1.0;
     private const double GpuReportThresholdPct = 2.0;
     private static readonly TimeSpan Interval = TimeSpan.FromSeconds(1);
@@ -51,6 +53,8 @@ internal sealed class SystemSampler
     private StreamWriter? _procs;
     private StreamWriter? _events;
     private Thread? _thread;
+    private Thread? _flagThread;
+    private EventWaitHandle? _flagEvent;
     private readonly ThreadPriority _priority;
 
     private CategoryReader? _processorReader;
@@ -137,6 +141,11 @@ internal sealed class SystemSampler
 
             _thread = new Thread(() => RunLoop(_cts.Token)) { IsBackground = true, Name = "VPinPerfMon sampler", Priority = _priority };
             _thread.Start();
+
+            _flagEvent = new EventWaitHandle(false, EventResetMode.AutoReset, FlagEventName);
+            _flagThread = new Thread(() => RunFlagLoop(_flagEvent, _cts.Token)) { IsBackground = true, Name = "VPinPerfMon flag listener" };
+            _flagThread.Start();
+            Console.WriteLine("User flag listener started.");
             return true;
         }
         catch (Exception ex)
@@ -156,6 +165,10 @@ internal sealed class SystemSampler
             await Task.Run(() => _thread.Join(TimeSpan.FromSeconds(3)));
         }
 
+        _flagThread?.Join(TimeSpan.FromSeconds(1));
+        _flagEvent?.Dispose();
+        _flagEvent = null;
+
         CloseAll();
         _cts.Dispose();
 
@@ -168,6 +181,25 @@ internal sealed class SystemSampler
         else
         {
             Console.WriteLine("System sampler stopped: no samples were written.");
+        }
+    }
+
+    private void RunFlagLoop(EventWaitHandle flagEvent, CancellationToken cancellationToken)
+    {
+        WaitHandle[] handles = [flagEvent, cancellationToken.WaitHandle];
+        long lastFlag = 0;
+        while (WaitHandle.WaitAny(handles) == 0)
+        {
+            long now = Stopwatch.GetTimestamp();
+            if (lastFlag != 0 && now - lastFlag < Stopwatch.Frequency * FlagDebounceMs / 1000) continue;
+            lastFlag = now;
+            double qpcMs = QpcMsNow();
+            lock (_gate)
+            {
+                if (_events == null) return;
+                WriteEvent(qpcMs, "UserFlag", string.Empty, 0);
+                _events.Flush();
+            }
         }
     }
 

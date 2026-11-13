@@ -606,6 +606,16 @@ powershell -Command "[System.Threading.EventWaitHandle]::OpenExisting('Local\VPi
 
 ---
 
+## User Flags
+
+While a capture runs, `SendUserFlag.exe` (shipped next to `VPinPerfMon.exe`) writes a `UserFlag` row to `SysEvents_*.csv`, so you can mark a moment without noting the time. Bind it to a cab button, AHK or JoyToKey. It exits silently if VPinPerfMon isn't running. Presses within 500 ms of the last flag are ignored (debounce).
+
+```
+SendUserFlag.exe
+```
+
+---
+
 ## Database Schema
 
 The `CustomPerfStats` table stores one row per run:

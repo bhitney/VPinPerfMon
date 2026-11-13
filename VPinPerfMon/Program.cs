@@ -1722,6 +1722,8 @@ internal partial class Program
         Console.WriteLine("To stop from batch file:");
         Console.WriteLine("  powershell -Command \"[System.Threading.EventWaitHandle]::OpenExisting('Local\\VPinPerfMon_Stop').Set()\"");
         Console.WriteLine();
+        Console.WriteLine("To mark a moment in SysEvents (user flag), run SendUserFlag.exe");
+        Console.WriteLine();
         Console.WriteLine("Press 'q' to stop monitoring at any time.");
     }
 
