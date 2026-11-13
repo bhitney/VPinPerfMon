@@ -19,7 +19,7 @@ internal partial class Program
         "LongGapCount", "LongGapPct", "LongGapThresholdMs", "LongGapMissCount", "LongGapNextDisplayedAvg",
         "SwapChainAddress", "SwapChainCount", "PresentApplication", "PresentMode",
         "BlameCpuPct", "BlameGpuPct", "BlameVersion", "GpuBusyPctOfRefresh", "StallCpuCount", "StallGpuCount",
-        "StallDisplayCount", "CfgBlameMinStalls", "CfgBlameGpuSaturation",
+        "StallModeSwitchCount", "StallAppWaitCount", "StallDisplayCount", "CfgBlameMinStalls", "CfgBlameGpuSaturation",
         "FileAnalysisPath", "FileRawDataPath", "FileAssetStem"
     ];
 

@@ -133,7 +133,7 @@ Four 40 s captures against Phosphor on this machine (20 logical cores), sampler 
 
 ### Known issues found along the way
 - Before `96b450e` the INSERT did not write `SwapChainAddress`, `SwapChainCount` and `PresentApplication`. They were dropped in commit `6210a9c` (2026-11-10), before any of the sampler work, and the report reads them. Rows 1592, 1593 and 1596 to 1601 have them NULL. Of the rows a regrade can reach, a forced regrade restores them (8 NULL rows became 3 on a copy of the database; the 3 left have no log files).
-- Before `eaa5e85` the INSERT did not write `BlameVersion`, `GpuBusyPctOfRefresh`, `StallCpuCount`, `StallGpuCount`, `StallModeSwitchCount` and `StallAppWaitCount`. `StallModeSwitchCount` and `StallAppWaitCount` are not in the regrade's column list either, so they are NULL for 337 of 341 rows and a regrade will not fill them. Not investigated.
+- Before `eaa5e85` the INSERT did not write `BlameVersion`, `GpuBusyPctOfRefresh`, `StallCpuCount`, `StallGpuCount`, `StallModeSwitchCount` and `StallAppWaitCount`. Fixed in `eaa5e85` for new runs. `--regrade` also did not write `StallModeSwitchCount` and `StallAppWaitCount` (it already wrote the other stall counts), so old rows ended up with three of the five stall counts and two NULLs. Fixed by adding both columns to the regrade list. The earlier note here, that they would stay NULL for 337 of 341 rows and that the cause was not investigated, was too strong: the live INSERT has written them since `eaa5e85` (rows 1598 to 1603 have them), and only regrade was missing them.
 - The version string in the console log is the commit that was checked out at build time, not the code that was compiled. A build from a working tree with uncommitted changes reports the previous commit (this made the cab build look older than it was).
 
 ### Regrade of the existing database (not yet run on the real database)
@@ -141,6 +141,7 @@ Four 40 s captures against Phosphor on this machine (20 logical cores), sampler 
 - It rewrites `FileAnalysisPath` and `FileRawDataPath` to the folder passed with `--logpath`, on the machine that runs it. It changed `GradeFrames` and `GradeDurationSec` in 42 rows and `GradeMissingFrames` in 78 (the truncated-row fix drops the cut-off last CSV row, so stored frame counts are one higher than the parser now gives; `PresentMonFrameCount` is not rewritten).
 - Without `--allow-mismatch`, rows whose stored frame count is one higher are skipped (32 of the newest 40).
 - Scanning `E:\perflogs\logs\archive` adds nothing: its 1,494 `.txt` files are almost all without a database row.
+(rows 1592, 1593 and 1596 have no log files, and row 647, from July, was updated but has no blame result; I did not look into why)
 - Run it last, with a backup (`--apply` writes one first), and on the machine whose log folder you want in the stored paths.
 
 ## Remaining steps
@@ -150,7 +151,7 @@ Done: 1 anchor and migrations 006 and 007, 2a C# parser for both time columns, 3
 Still to do:
 - **VpinReports** (step 2 for the reports side and step 5): the report's CSV drill-down hard-codes `CPUStartTime` (the numeric column list, the required-column check, the timeline code, `tests/drilldown.test.js`) and parses `First frame CPUStartTime: ... ms` from the `.txt` for the warm-up cutoff, which is absolute with `qpc`. It needs a QPC fixture in the JS tests. Then the correlation lane under the frame timeline, the stall tooltip with the busiest processes, and a more specific diagnosis. Until then, runs on the new build with the default `--timebase qpc` break the drill-down; `--timebase relative` avoids that.
 - **Regrade** the real database (above), after any further grading changes.
-- **Later, optional:** remove `FileAnalysisPath` and `FileRawDataPath` once the reports use `FileAssetStem`; look at why `StallModeSwitchCount` and `StallAppWaitCount` are not stored; phase 2, ETW deep capture (needs elevation, parked because every stall in the data had a quiet system).
+- **Later, optional:** remove `FileAnalysisPath` and `FileRawDataPath` once the reports use `FileAssetStem`; phase 2, ETW deep capture (needs elevation, parked because every stall in the data had a quiet system).
 
 ## Open questions
 
