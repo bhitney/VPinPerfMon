@@ -21,6 +21,7 @@
     <ProjectReference Include="..\VPinPerfMon\VPinPerfMon.csproj" ReferenceOutputAssembly="false" Private="false" />
     <ProjectReference Include="..\VPinPerfMon.GUI\VPinPerfMon.GUI.csproj" ReferenceOutputAssembly="false" Private="false" />
     <ProjectReference Include="..\SendUserFlag\SendUserFlag.csproj" ReferenceOutputAssembly="false" Private="false" />
+    <ProjectReference Include="..\GpuBursts\GpuBursts.csproj" ReferenceOutputAssembly="false" Private="false" />
   </ItemGroup>
 
   <!-- Post-build: copy both projects' output to distrib, Windows runtimes only -->
@@ -75,6 +76,15 @@
       <FlagFiles Include="$(FlagOutDir)*.*" Exclude="$(FlagOutDir)*.pdb" />
     </ItemGroup>
     <Copy SourceFiles="@(FlagFiles)" DestinationFolder="$(DistribDir)" SkipUnchangedFiles="true" />
+
+    <!-- GpuBursts companion tool -->
+    <PropertyGroup>
+      <GpuOutDir>$(MSBuildThisFileDirectory)..\GpuBursts\bin\$(Configuration)\net10.0\</GpuOutDir>
+    </PropertyGroup>
+    <ItemGroup>
+      <GpuFiles Include="$(GpuOutDir)*.*" Exclude="$(GpuOutDir)*.pdb" />
+    </ItemGroup>
+    <Copy SourceFiles="@(GpuFiles)" DestinationFolder="$(DistribDir)" SkipUnchangedFiles="true" />
 
     <!-- PresentMon executables from solution-level PresentMon folder -->
     <ItemGroup>

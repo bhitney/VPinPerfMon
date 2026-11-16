@@ -43,3 +43,6 @@ Reporting/.venv/
 /SysStats_*.csv
 /SysProcs_*.csv
 /SysEvents_*.csv
+
+# Local helper scripts
+*.local.bat
