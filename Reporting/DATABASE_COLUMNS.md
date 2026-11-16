@@ -36,6 +36,8 @@ Useful for splitting renderers. |
 | `FileAnalysisPath` | Absolute path to the text log of the run. May no longer exist if logs were cleaned up. |
 | `FileRawDataPath` |
 | `FileAssetStem` | The part of the file names that is the same for every file of the run, for example `20261112133050_Blue Note (Gottlieb 1979)`. It has no folder and no extension, so it works on any device: look in your own copy of the log folder (and its archive) for `<Prefix>_<FileAssetStem>.<extension>`. The files are `PresentMon_<stem>.csv` (frame data), `PresentMon_<stem>.txt` (console log), `SysStats_<stem>.csv`, `SysProcs_<stem>.csv` and `SysEvents_<stem>.csv` (system sampler, newer runs only). Treat it as a plain string, not a glob: game names can contain `[ ] * ?`. Match with the prefix and extension rather than `*_<stem>.*`, because a stem can be the tail of a longer one. Which files exist depends on the run (`--deletecsv true` or `--sysstats false` leave some out). Older rows were filled in from `FileRawDataPath` by migration 007. `NULL` means the stem is not known. |
+| `Deleted` | Soft-delete flag: `0` = the run is kept (the default), `1` = the run was purged and reports should skip it. Added by migration 008; every existing row is `0`. Filter reports with `COALESCE(Deleted, 0) = 0` so a database that has not been migrated still works. The row and its files are not removed. |
+| `DeletedUtc` | ISO 8601 UTC time the run was marked deleted, for example `2026-11-16T16:20:00Z`. `NULL` while `Deleted = 0`. Set together with `Deleted`; set it back to `NULL` to restore a run. |
 
 ## Stutter grade (recommended measure)
 

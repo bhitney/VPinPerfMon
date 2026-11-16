@@ -142,7 +142,12 @@ chart_defs = [
         "xlabel": "GPU Average (%)", "ylabel": "FPS Average",
     },
     {
-        "id": "cpuVsGpu", "title": "CPU Average vs GPU Average",
+        "id": "fpsVsGpuMem", "title": "FPS Average vs GPU Memory Average",
+        "x": "GpuMemoryAverage", "y": "FpsAverage",
+        "xlabel": "GPU Memory Average (units)", "ylabel": "FPS Average",
+    },
+    {
+        "id": "cpuVsGpu", "title"
         "x": "CpuAverage", "y": "GpuAverage",
         "xlabel": "CPU Average (%)", "ylabel": "GPU Average (%)",
     },
@@ -162,11 +167,6 @@ chart_defs = [
             "screen). A perfect 100 on Frame Time but much lower Displayed Time indicates downstream "
             "(vsync/compositor/driver) is causing visible hitches."
         ),
-    },
-    {
-        "id": "fpsVsGpuMem", "title": "FPS Average vs GPU Memory Average",
-        "x": "GpuMemoryAverage", "y": "FpsAverage",
-        "xlabel": "GPU Memory Average (units)", "ylabel": "FPS Average",
     },
     {
         "id": "blame", "title": "Blame CPU% vs Blame GPU% (bottleneck attribution)",

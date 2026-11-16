@@ -1,4 +1,4 @@
-﻿CREATE TABLE IF NOT EXISTS CustomPerfStats (
+CREATE TABLE IF NOT EXISTS CustomPerfStats (
     Id INTEGER PRIMARY KEY AUTOINCREMENT,
     GameId INTEGER NOT NULL DEFAULT 0,
     IsVR INTEGER NOT NULL DEFAULT 0,
@@ -195,7 +195,11 @@
     FileRawDataPath TEXT,         -- PresentMon .csv (NULL if deleted at run time)
 
     -- Name shared by all files of the run (migration 007)
-    FileAssetStem TEXT            -- e.g. 20261112133050_Blue Note (Gottlieb 1979); files are <Prefix>_<stem>.<ext>, no folder
+    FileAssetStem TEXT,           -- e.g. 20261112133050_Blue Note (Gottlieb 1979); files are <Prefix>_<stem>.<ext>, no folder
+
+    -- Soft delete (migration 008)
+    Deleted INTEGER NOT NULL DEFAULT 0,  -- 1 = purged; reports filter on Deleted = 0
+    DeletedUtc TEXT               -- ISO 8601 UTC when purged; NULL while Deleted = 0
 );
 
 -- Indexes for better query performance

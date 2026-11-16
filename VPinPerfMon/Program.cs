@@ -1627,7 +1627,11 @@ internal partial class Program
                         -- File pointers (absolute paths)
                         FileAnalysisPath TEXT,
                         FileRawDataPath TEXT,
-                        FileAssetStem TEXT
+                        FileAssetStem TEXT,
+
+                        -- Soft delete
+                        Deleted INTEGER NOT NULL DEFAULT 0,
+                        DeletedUtc TEXT
                     )";
 
                 command.ExecuteNonQuery();
